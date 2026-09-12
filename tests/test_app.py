@@ -35,7 +35,7 @@ def test_app_initial_render():
 
 
 def test_app_valid_video_upload(video_bytes):
-    """Verify application handles valid video upload end-to-end."""
+    """Verify application handles valid video upload and renders Feature 2 controls."""
     at = AppTest.from_file(APP_FILE).run()
     at.file_uploader[0].upload(filename="sample_classroom.mp4", content=video_bytes).run()
 
@@ -51,6 +51,38 @@ def test_app_valid_video_upload(video_bytes):
     assert metrics["Resolution"] == "1280 x 720"
     assert "30" in metrics["Frame Rate"]
     assert metrics["Total Frames"] == "90"
+
+    # Verify Feature 2 extraction section rendered
+    subheaders = [s.value for s in at.subheader]
+    assert any("Feature 2: Frame Extraction & Preprocessing" in s for s in subheaders)
+
+    # Verify extract button is present
+    buttons = [b.label for b in at.button]
+    assert any("Extract Frames" in b for b in buttons)
+
+
+def test_app_frame_extraction_workflow(video_bytes):
+    """Verify frame extraction button execution in Streamlit AppTest."""
+    at = AppTest.from_file(APP_FILE).run()
+    at.file_uploader[0].upload(filename="sample_classroom.mp4", content=video_bytes).run()
+    assert not at.exception
+
+    # Find and click the extract frames button
+    extract_button = next(b for b in at.button if "Extract Frames" in b.label)
+    extract_button.click().run()
+
+    assert not at.exception
+
+    # Verify extraction summary subheader
+    subheaders = [s.value for s in at.subheader]
+    assert any("Frame Extraction Summary" in s for s in subheaders)
+    assert any("Preview Extracted Frames" in s for s in subheaders)
+    assert any("Temporal Frame Metadata" in s for s in subheaders)
+
+    # Verify metrics rendered in extraction summary
+    metrics = {m.label: m.value for m in at.metric}
+    assert "Extracted Frames" in metrics
+    assert int(metrics["Extracted Frames"].replace(",", "")) > 0
 
 
 def test_app_empty_file_upload():

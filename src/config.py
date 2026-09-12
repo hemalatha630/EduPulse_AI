@@ -19,6 +19,11 @@ MODELS_DIR = BASE_DIR / "models"
 SUPPORTED_EXTENSIONS = {".mp4", ".avi", ".mov", ".mkv"}
 MAX_UPLOAD_SIZE_BYTES = 1024 * 1024 * 1024  # 1 GB
 
+# Feature 2 Configuration: Frame Extraction & Preprocessing
+DEFAULT_SAMPLING_INTERVAL = 5  # Every 5th frame (~6 FPS for 30 FPS video)
+DEFAULT_JPEG_QUALITY = 95
+DEFAULT_FRAME_FILENAME_PATTERN = "frame_{index:06d}.jpg"
+
 # Project Metadata
 PROJECT_TITLE = "Temporal Learning-Engagement Profiling from Classroom Videos"
 PROJECT_SHORT_TITLE = "EduPulse AI"
