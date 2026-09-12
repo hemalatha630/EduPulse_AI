@@ -1,0 +1,38 @@
+# Python Virtual Environments
+.venv/
+venv/
+env/
+ENV/
+
+# Python Cache & Bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Environment Variables & Secrets
+.env
+.env.*
+
+# Streamlit Local Runtime
+.streamlit/
+
+# Classroom Videos & Sensitive Student Data (Privacy Protection)
+data/videos/*
+!data/videos/.gitkeep
+data/frames/*
+!data/frames/.gitkeep
+data/processed/*
+!data/processed/.gitkeep
+results/*
+!results/.gitkeep
+
+# IDE & OS Specific
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Scratch & Temporary Testing Media
+scratch/
+
