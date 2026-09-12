@@ -2,8 +2,10 @@
 
 Feature 1: Project Setup + Classroom Video Input & Metadata Profiling.
 Feature 2: Frame Extraction & Preprocessing with Temporal Metadata Preservation.
+Feature 3: Student / Person Detection using Pretrained YOLO Object Detection.
 """
 
+import math
 from pathlib import Path
 import sys
 
@@ -12,13 +14,13 @@ ROOT_DIR = Path(__file__).resolve().parent
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-import math
-
 import pandas as pd
 import streamlit as st
 
 from src.config import (
+    DEFAULT_CONFIDENCE_THRESHOLD,
     DEFAULT_SAMPLING_INTERVAL,
+    DEFAULT_YOLO_MODEL,
     EXCLUDED_INTERNAL_STATES,
     FRAMES_DIR,
     PROCESSED_DIR,
@@ -27,6 +29,12 @@ from src.config import (
     TARGET_OBSERVABLE_BEHAVIOURS,
     VIDEOS_DIR,
     ensure_directories,
+)
+from src.detection.detector import (
+    DetectionResult,
+    DetectionSummary,
+    YOLOPersonDetector,
+    run_detection_on_frames,
 )
 from src.preprocessing.frame_preprocessor import FramePreprocessor
 from src.video.frame_extractor import (
@@ -45,7 +53,7 @@ from src.video.video_utils import (
 
 # Page configuration
 st.set_page_config(
-    page_title="EduPulse AI | Classroom Video Input & Frame Extraction",
+    page_title="EduPulse AI | Classroom Video Input, Frames & Person Detection",
     page_icon="🎓",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -53,6 +61,14 @@ st.set_page_config(
 
 # Ensure data directories exist
 ensure_directories()
+
+
+@st.cache_resource
+def get_yolo_detector(model_name: str = DEFAULT_YOLO_MODEL) -> YOLOPersonDetector:
+    """Cache and return the loaded YOLO person detector instance."""
+    detector = YOLOPersonDetector(model_name=model_name)
+    detector.load_model()
+    return detector
 
 
 def render_sidebar():
@@ -82,8 +98,9 @@ def render_sidebar():
         st.markdown("---")
         st.subheader("⚙️ Current Phase")
         st.success("✅ **Feature 1: Video Ingestion & Metadata**")
-        st.success("🚀 **Feature 2: Frame Extraction & Preprocessing**")
-        st.caption("Next stages (Detection, Tracking, Behaviour CNN/RNN) unlock in future milestones.")
+        st.success("✅ **Feature 2: Frame Extraction & Preprocessing**")
+        st.success("🚀 **Feature 3: Student / Person Detection**")
+        st.caption("Next stages (Tracking, Behaviour CNN/RNN) unlock in future milestones.")
 
 
 def render_header():
@@ -91,7 +108,7 @@ def render_header():
     st.title(PROJECT_TITLE)
     st.markdown(
         "Upload a classroom recording (`.mp4`, `.avi`, `.mov`, `.mkv`), inspect stream properties, "
-        "and extract chronological preprocessed frames for temporal engagement profiling."
+        "extract chronological preprocessed frames, and detect visible people using YOLO object detection."
     )
     st.divider()
 
@@ -378,6 +395,224 @@ def render_frame_extraction_section(video_path: Path, metadata: VideoMetadata):
         render_metadata_table(df, summary.video_id)
 
 
+def render_detection_summary(summary: DetectionSummary):
+    """Display structured summary cards and metrics after person detection."""
+    st.subheader("📋 Detection Summary")
+
+    metric_c1, metric_c2, metric_c3, metric_c4, metric_c5 = st.columns(5)
+    with metric_c1:
+        st.metric("Frames Processed", f"{summary.frames_processed:,}")
+    with metric_c2:
+        st.metric("Total Detections", f"{summary.total_person_detections:,}")
+    with metric_c3:
+        st.metric("Avg Detections/Frame", f"{summary.avg_detections_per_frame}")
+    with metric_c4:
+        st.metric("Min Detections", f"{summary.min_detections}")
+    with metric_c5:
+        st.metric("Max Detections", f"{summary.max_detections}")
+
+    spec_col1, spec_col2 = st.columns(2)
+    with spec_col1:
+        st.markdown(
+            f"""
+            - **Detection Model:** `{summary.model_name}` (Pretrained COCO)
+            - **Confidence Threshold:** `{summary.confidence_threshold:.2f}`
+            """
+        )
+    with spec_col2:
+        st.markdown(
+            f"""
+            - **Target Class:** `person` (Class ID 0)
+            - **Detections CSV:** `{summary.detections_csv_path}`
+            """
+        )
+
+
+def render_detection_section(video_path: Path):
+    """Render Feature 3: Student / Person Detection controls and visualizations."""
+    st.subheader("👥 Feature 3: Student / Person Detection")
+    st.markdown(
+        "Detect visible people in classroom frames using a lightweight pretrained YOLO object detector. "
+        "Detections are computed independently per frame with bounding boxes and confidence scores. "
+        "*(Note: Persistent student tracking IDs are not assigned; tracking will be introduced in Feature 4).* "
+    )
+
+    video_id = derive_video_id(video_path)
+    metadata_csv_path = PROCESSED_DIR / video_id / "frame_metadata.csv"
+    frames_dir = FRAMES_DIR / video_id
+
+    # Verify extracted frames exist
+    if not metadata_csv_path.exists() or not frames_dir.exists():
+        st.info("👉 Please complete **Feature 2 (Frame Extraction)** above to generate frames for person detection.")
+        return
+
+    try:
+        frames_df = pd.read_csv(metadata_csv_path)
+        if frames_df.empty:
+            st.info("👉 No extracted frames found in metadata. Please run frame extraction first.")
+            return
+    except Exception as exc:
+        st.error(f"Error reading frame metadata: {str(exc)}")
+        return
+
+    det_ctrl_col1, det_ctrl_col2 = st.columns([1.1, 1.0], gap="medium")
+
+    with det_ctrl_col1:
+        st.markdown("##### 🎯 Detection Confidence Threshold")
+        conf_threshold = st.slider(
+            label="Minimum Confidence Threshold:",
+            min_value=0.10,
+            max_value=1.00,
+            value=DEFAULT_CONFIDENCE_THRESHOLD,
+            step=0.05,
+            help="Filters out bounding box detections with confidence scores below this threshold.",
+            key="slider_conf_threshold",
+        )
+        st.caption(f"Currently filtering detections with confidence $\\ge {conf_threshold:.2f}$.")
+
+    with det_ctrl_col2:
+        st.markdown("##### 🖼️ Frame Selection")
+        selection_mode_label = st.selectbox(
+            label="Frames to process:",
+            options=[
+                "Sample representative frames (First, Middle, Last)",
+                "First frame only",
+                "Custom sample count (N evenly spaced frames)",
+                "All extracted frames (May take longer)",
+            ],
+            index=0,
+            help="Choose how many extracted frames to run person detection on.",
+            key="sb_frame_selection",
+        )
+
+        custom_count = 5
+        if "Custom" in selection_mode_label:
+            custom_count = st.number_input(
+                "Number of sample frames (N):",
+                min_value=1,
+                max_value=max(len(frames_df), 1),
+                value=min(5, len(frames_df)),
+                step=1,
+            )
+
+    # Map selection label to mode
+    if "First frame" in selection_mode_label:
+        selection_mode = "first"
+    elif "All" in selection_mode_label:
+        selection_mode = "all"
+    elif "Custom" in selection_mode_label:
+        selection_mode = "custom"
+    else:
+        selection_mode = "sample"
+
+    det_state_key = f"detection_{video_id}"
+
+    detect_clicked = st.button(
+        "🔍 Detect People in Frames",
+        type="primary",
+        use_container_width=True,
+        key="btn_detect_persons",
+    )
+
+    if detect_clicked:
+        progress_bar = st.progress(0.0)
+        status_text = st.empty()
+
+        def on_det_progress(current: int, total: int, msg: str):
+            fraction = min(max(current / max(total, 1), 0.0), 1.0)
+            progress_bar.progress(fraction)
+            status_text.caption(f"⏳ {msg} ({int(fraction * 100)}%)")
+
+        with st.spinner("Initializing YOLO model and running person detection..."):
+            try:
+                detector = get_yolo_detector(DEFAULT_YOLO_MODEL)
+                success, summary, det_df, annotated_frames, msg = run_detection_on_frames(
+                    video_id=video_id,
+                    frames_df=frames_df,
+                    detector=detector,
+                    conf_threshold=conf_threshold,
+                    frame_selection_mode=selection_mode,
+                    custom_sample_count=int(custom_count),
+                    progress_callback=on_det_progress,
+                )
+            except Exception as exc:
+                success = False
+                summary = None
+                det_df = None
+                annotated_frames = {}
+                msg = f"Unexpected detection error: {str(exc)}"
+
+        progress_bar.empty()
+        status_text.empty()
+
+        if success and summary and det_df is not None:
+            st.session_state[det_state_key] = {
+                "summary": summary,
+                "df": det_df,
+                "annotated": annotated_frames,
+            }
+            st.success(f"✅ {msg}")
+        else:
+            st.error(f"❌ Detection failed: {msg}")
+
+    # Render detection results if present in session state
+    if det_state_key in st.session_state:
+        det_res = st.session_state[det_state_key]
+        summary: DetectionSummary = det_res["summary"]
+        det_df: pd.DataFrame = det_res["df"]
+        annotated_frames: Dict[int, np.ndarray] = det_res["annotated"]
+
+        st.markdown("---")
+        render_detection_summary(summary)
+
+        st.markdown("---")
+        st.subheader("🖼️ Detection Visualizer")
+
+        if not annotated_frames:
+            st.warning("⚠️ No people were detected in the selected frame(s) using the current confidence threshold.")
+        else:
+            available_frame_indices = sorted(annotated_frames.keys())
+            if len(available_frame_indices) == 1:
+                selected_frame_idx = available_frame_indices[0]
+            else:
+                selected_frame_idx = st.select_slider(
+                    "Select frame to inspect bounding box detections:",
+                    options=available_frame_indices,
+                    value=available_frame_indices[0],
+                    format_func=lambda idx: f"Frame #{idx:03d}",
+                )
+
+            annotated_img = annotated_frames[selected_frame_idx]
+            frame_dets = det_df[det_df["frame_id"] == selected_frame_idx]
+            people_count = len(frame_dets)
+
+            st.markdown(f"**Showing Frame #{selected_frame_idx:03d}** — People Detected: `{people_count}`")
+            st.image(
+                annotated_img,
+                caption=f"Frame #{selected_frame_idx:03d} | Detected People: {people_count} | Conf >= {summary.confidence_threshold:.2f}",
+                use_container_width=True,
+            )
+
+        st.markdown("---")
+        st.subheader("📄 Detections Dataset")
+        st.caption("Structured bounding box coordinates and confidence scores per detected person.")
+
+        st.dataframe(
+            det_df,
+            use_container_width=True,
+            hide_index=True,
+        )
+
+        csv_data = det_df.to_csv(index=False).encode("utf-8")
+        st.download_button(
+            label="📥 Download Detections CSV",
+            data=csv_data,
+            file_name=f"{video_id}_detections.csv",
+            mime="text/csv",
+            help="Download bounding box coordinates and confidence metrics for all detections.",
+        )
+
+
 def main():
     """Main application loop."""
     render_sidebar()
@@ -442,6 +677,12 @@ def main():
     # Feature 2: Frame Extraction & Preprocessing Section
     if saved_path and saved_path.exists() and metadata:
         render_frame_extraction_section(saved_path, metadata)
+
+    st.markdown("---")
+
+    # Feature 3: Student / Person Detection Section
+    if saved_path and saved_path.exists():
+        render_detection_section(saved_path)
 
 
 if __name__ == "__main__":

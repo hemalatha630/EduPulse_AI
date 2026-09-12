@@ -85,6 +85,33 @@ def test_app_frame_extraction_workflow(video_bytes):
     assert int(metrics["Extracted Frames"].replace(",", "")) > 0
 
 
+def test_app_detection_workflow(video_bytes):
+    """Verify Feature 3 person detection UI workflow end-to-end."""
+    at = AppTest.from_file(APP_FILE, default_timeout=30).run()
+    at.file_uploader[0].upload(filename="sample_classroom.mp4", content=video_bytes).run()
+    assert not at.exception
+
+    # Extract frames first so detection section has frames
+    extract_button = next(b for b in at.button if "Extract Frames" in b.label)
+    extract_button.click().run()
+    assert not at.exception
+
+    # Verify Feature 3 subheader
+    subheaders = [s.value for s in at.subheader]
+    assert any("Feature 3: Student / Person Detection" in s for s in subheaders)
+
+    # Trigger detection
+    detect_btn = next(b for b in at.button if "Detect People in Frames" in b.label)
+    detect_btn.click().run()
+    assert not at.exception
+
+    # Verify detection summary rendered
+    subheaders_after = [s.value for s in at.subheader]
+    assert any("Detection Summary" in s for s in subheaders_after)
+    assert any("Detection Visualizer" in s for s in subheaders_after)
+    assert any("Detections Dataset" in s for s in subheaders_after)
+
+
 def test_app_empty_file_upload():
     """Verify application handles empty file gracefully."""
     at = AppTest.from_file(APP_FILE).run()
