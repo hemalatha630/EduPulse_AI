@@ -24,6 +24,12 @@ DEFAULT_SAMPLING_INTERVAL = 5  # Every 5th frame (~6 FPS for 30 FPS video)
 DEFAULT_JPEG_QUALITY = 95
 DEFAULT_FRAME_FILENAME_PATTERN = "frame_{index:06d}.jpg"
 
+# Feature 3 Configuration: Student / Person Detection
+DEFAULT_CONFIDENCE_THRESHOLD = 0.25
+DEFAULT_YOLO_MODEL = "yolov8n.pt"
+PERSON_CLASS_ID = 0
+PERSON_CLASS_NAME = "person"
+
 # Project Metadata
 PROJECT_TITLE = "Temporal Learning-Engagement Profiling from Classroom Videos"
 PROJECT_SHORT_TITLE = "EduPulse AI"
