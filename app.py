@@ -15,6 +15,7 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 import cv2
+import numpy as np
 import pandas as pd
 import streamlit as st
 
@@ -33,10 +34,21 @@ from src.behaviour.behaviour_labels import (
     get_behaviour_hex,
     get_behaviour_rgb,
 )
+from src.cnn import (
+    CNNFeatureExtractor,
+    compute_pca_2d,
+    create_pca_scatter_figure,
+    run_cnn_feature_extraction,
+)
 from src.config import (
     BEHAVIOUR_COLORS,
     BEHAVIOURS_CSV_FILENAME,
+    CNN_FEATURE_DIM,
+    CNN_FEATURES_NPY_FILENAME,
+    CNN_METADATA_CSV_FILENAME,
     DEFAULT_BEHAVIOUR_CONF_THRESHOLD,
+    DEFAULT_CNN_BATCH_SIZE,
+    DEFAULT_CNN_MODEL,
     DEFAULT_CONFIDENCE_THRESHOLD,
     DEFAULT_SAMPLING_INTERVAL,
     DEFAULT_TRACKER,
@@ -46,6 +58,7 @@ from src.config import (
     FRAMES_DIR,
     PROCESSED_DIR,
     PROJECT_TITLE,
+    SUPPORTED_CNN_MODELS,
     SUPPORTED_EXTENSIONS,
     SUPPORTED_TRACKERS,
     TARGET_OBSERVABLE_BEHAVIOURS,
@@ -119,6 +132,13 @@ def get_behaviour_classifier() -> BehaviourClassifier:
     return classifier
 
 
+@st.cache_resource
+def get_cnn_feature_extractor(model_name: str = DEFAULT_CNN_MODEL) -> CNNFeatureExtractor:
+    """Cache and return the loaded CNN visual feature extractor instance."""
+    extractor = CNNFeatureExtractor(model_name=model_name)
+    return extractor
+
+
 def render_sidebar():
     """Render educational research context and pipeline information in sidebar."""
     with st.sidebar:
@@ -149,8 +169,9 @@ def render_sidebar():
         st.success("✅ **Feature 2: Frame Extraction & Preprocessing**")
         st.success("✅ **Feature 3: Student / Person Detection**")
         st.success("✅ **Feature 4: Student / Person Tracking**")
-        st.success("🚀 **Feature 5: Observable Behaviour Recognition**")
-        st.caption("Next stages (Temporal CNN/RNN Sequence Modelling) unlock in future milestones.")
+        st.success("✅ **Feature 5: Observable Behaviour Recognition**")
+        st.success("🚀 **Feature 6: CNN Visual Feature Extraction**")
+        st.caption("Next stages (Feature 7: Temporal Sequence Modelling RNN/LSTM) unlock in future milestones.")
 
 
 def render_header():
@@ -1389,6 +1410,387 @@ def render_behaviour_recognition_section(video_path: Path):
         )
 
 
+def render_cnn_feature_extraction_section(saved_path: Path):
+    """Render Feature 6: CNN Visual Feature Extraction Section."""
+    video_id = derive_video_id(saved_path)
+    frames_dir = FRAMES_DIR / video_id
+    frame_meta_path = PROCESSED_DIR / video_id / "frame_metadata.csv"
+    tracks_csv_path = PROCESSED_DIR / video_id / TRACKS_CSV_FILENAME
+    behaviours_csv_path = PROCESSED_DIR / video_id / BEHAVIOURS_CSV_FILENAME
+    cnn_npy_path = PROCESSED_DIR / video_id / CNN_FEATURES_NPY_FILENAME
+    cnn_meta_path = PROCESSED_DIR / video_id / CNN_METADATA_CSV_FILENAME
+
+    st.header("🧠 Feature 6: CNN Visual Feature Extraction")
+    st.caption(
+        "Converts each tracked student's visual image crop into a fixed 512-dimensional numerical vector "
+        "using a pretrained ResNet18 convolutional backbone with the final classification layer removed."
+    )
+
+    st.info(
+        "🔬 **Research Scope & Ethical Boundaries:** The CNN operates strictly as a visual feature extractor "
+        "(encoding body posture, head orientation, visible objects/desks, and spatial appearance). "
+        "It does **not** detect or infer internal mental states such as motivation, boredom, intelligence, "
+        "understanding, or cognitive engagement."
+    )
+
+    # Verify Feature 2 and Feature 4 outputs exist
+    if not frame_meta_path.exists():
+        st.warning(
+            "⚠️ Preprocessed video frames not found. Please complete **Feature 2: Frame Extraction & Preprocessing** above."
+        )
+        return
+
+    if not tracks_csv_path.exists():
+        st.warning(
+            "⚠️ Tracking data (`tracks.csv`) not found. Please complete **Feature 4: Student / Person Tracking** above."
+        )
+        return
+
+    try:
+        frames_df = pd.read_csv(frame_meta_path)
+    except Exception as exc:
+        st.error(f"❌ Failed to load frame metadata: {exc}")
+        return
+
+    try:
+        tracks_df = pd.read_csv(tracks_csv_path)
+    except Exception as exc:
+        st.error(f"❌ Failed to load tracking dataset: {exc}")
+        return
+
+    behaviours_df = None
+    if behaviours_csv_path.exists():
+        try:
+            behaviours_df = pd.read_csv(behaviours_csv_path)
+        except Exception:
+            behaviours_df = None
+
+    extractor = get_cnn_feature_extractor()
+
+    # Controls Layout
+    st.subheader("⚙️ Feature Extraction Controls")
+    ctrl_col1, ctrl_col2, ctrl_col3, ctrl_col4 = st.columns([1.2, 1.0, 1.0, 1.0])
+
+    with ctrl_col1:
+        st.selectbox(
+            label="Pretrained CNN Model",
+            options=SUPPORTED_CNN_MODELS,
+            index=0,
+            help="Pretrained PyTorch ResNet18 backbone. Final fully connected classification layer is replaced with Identity for fixed 512-dim visual representation.",
+            key="cnn_model_selection",
+        )
+    with ctrl_col2:
+        st.metric(
+            label="Hardware Device",
+            value=extractor.device_name,
+            help="Automatically detected compute hardware (CUDA if GPU available, otherwise CPU).",
+        )
+    with ctrl_col3:
+        st.metric(
+            label="Feature Dimension",
+            value=f"{extractor.feature_dim}D",
+            help="Fixed size of the output numerical vector produced by the CNN backbone.",
+        )
+    with ctrl_col4:
+        batch_size = st.selectbox(
+            label="Batch Size",
+            options=[8, 16, 32, 64],
+            index=1,
+            help="Number of student crops processed simultaneously in each forward pass.",
+            key="cnn_batch_size",
+        )
+
+    # Frame Range Selection
+    total_frames = len(frames_df)
+    frame_mode = st.radio(
+        label="Frames to process:",
+        options=["All extracted frames", "Sample frames (first N)", "Custom frame range"],
+        index=0,
+        horizontal=True,
+        key="cnn_frame_selection_mode",
+    )
+
+    first_n = 10
+    r_start = 1
+    r_end = min(total_frames, 18)
+
+    if frame_mode == "Sample frames (first N)":
+        first_n = st.slider(
+            "Select first N frames to process:",
+            min_value=1,
+            max_value=max(1, total_frames),
+            value=min(10, max(1, total_frames)),
+            key="cnn_sample_n",
+        )
+        mode_key = "sample"
+    elif frame_mode == "Custom frame range":
+        r_c1, r_c2 = st.columns(2)
+        with r_c1:
+            r_start = st.number_input(
+                "Start Frame Index:",
+                min_value=1,
+                max_value=max(1, total_frames),
+                value=1,
+                key="cnn_range_start",
+            )
+        with r_c2:
+            r_end = st.number_input(
+                "End Frame Index:",
+                min_value=int(r_start),
+                max_value=max(1, total_frames),
+                value=min(max(1, total_frames), int(r_start) + 15),
+                key="cnn_range_end",
+            )
+        mode_key = "range"
+    else:
+        mode_key = "all"
+
+    # Extraction Button
+    if st.button(
+        "🚀 Extract CNN Visual Features",
+        key="btn_run_cnn_extraction",
+        type="primary",
+        use_container_width=True,
+    ):
+        progress_bar = st.progress(0.0)
+        status_text = st.empty()
+
+        def update_progress(prog, msg):
+            progress_bar.progress(prog)
+            status_text.text(msg)
+
+        with st.spinner("Extracting CNN visual features from tracked person crops..."):
+            success, summary, meta_df, feats_arr, err_msg = run_cnn_feature_extraction(
+                video_id=video_id,
+                frames_df=frames_df,
+                tracks_df=tracks_df,
+                feature_extractor=extractor,
+                behaviours_df=behaviours_df,
+                batch_size=int(batch_size),
+                frame_selection_mode=mode_key,
+                first_n=int(first_n),
+                range_start=int(r_start),
+                range_end=int(r_end),
+                progress_callback=update_progress,
+            )
+
+        if success and summary:
+            st.success(
+                f"✅ **CNN Feature Extraction Complete:** {summary.valid_features_extracted} feature vectors "
+                f"extracted in {summary.processing_time_seconds:.2f}s."
+            )
+            st.session_state[f"{video_id}_cnn_summary"] = summary
+        else:
+            st.error(f"❌ **Extraction Failed:** {err_msg}")
+
+    # Display Existing / Newly Generated CNN Features
+    if cnn_npy_path.exists() and cnn_meta_path.exists():
+        try:
+            features_array = np.load(str(cnn_npy_path))
+            meta_df = pd.read_csv(cnn_meta_path)
+        except Exception as exc:
+            st.error(f"❌ Error loading CNN feature files from disk: {exc}")
+            return
+
+        st.markdown("---")
+        st.subheader("📊 CNN Feature Extraction Summary")
+
+        m1, m2, m3, m4, m5, m6 = st.columns(6)
+        with m1:
+            st.metric("Frames Processed", f"{meta_df['extracted_frame_index'].nunique():,}")
+        with m2:
+            st.metric("Unique Tracks", f"{meta_df['track_id'].nunique():,}")
+        with m3:
+            st.metric("Valid Feature Vectors", f"{len(features_array):,}")
+        with m4:
+            st.metric("Feature Dimension", f"{features_array.shape[1] if features_array.ndim == 2 else 512}D")
+        with m5:
+            st.metric("CNN Model", extractor.model_name.capitalize())
+        with m6:
+            st.metric("Device Used", extractor.device_name)
+
+        st.markdown("---")
+
+        # Interactive Visual Inspection: Frame -> Track -> Crop -> Feature Preview
+        st.subheader("🔍 Visual Feature Inspection")
+        st.caption(
+            "Select a processed classroom frame and a tracked student to inspect their visual crop and "
+            "the corresponding 512-dimensional CNN feature vector."
+        )
+
+        avail_frame_indices = sorted(meta_df["extracted_frame_index"].unique())
+        if not avail_frame_indices:
+            st.info("No processed frame feature vectors available.")
+            return
+
+        sel_col1, sel_col2 = st.columns(2)
+        with sel_col1:
+            selected_frame_idx = st.selectbox(
+                "Select Frame Index for Inspection",
+                avail_frame_indices,
+                index=0,
+                key="cnn_inspect_frame_idx",
+            )
+
+        frame_features = meta_df[meta_df["extracted_frame_index"] == selected_frame_idx]
+        avail_tracks = sorted(frame_features["track_id"].unique())
+
+        with sel_col2:
+            selected_track_id = st.selectbox(
+                "Select Track ID",
+                avail_tracks,
+                index=0,
+                key="cnn_inspect_track_id",
+            )
+
+        # Retrieve selected crop metadata and vector
+        target_rows = frame_features[frame_features["track_id"] == selected_track_id]
+        if target_rows.empty:
+            st.info("No features found for this track in the selected frame.")
+            return
+        target_row = target_rows.iloc[0]
+        feat_idx = int(target_row["feature_index"])
+        feature_vector = features_array[feat_idx]
+
+        # Load original frame and crop
+        frame_filename = str(target_row["frame_filename"])
+        frame_file_path = frames_dir / frame_filename
+        crop_image = None
+
+        if frame_file_path.exists():
+            bgr_frame = cv2.imread(str(frame_file_path))
+            if bgr_frame is not None:
+                rgb_frame = cv2.cvtColor(bgr_frame, cv2.COLOR_BGR2RGB)
+                bbox = (float(target_row["x1"]), float(target_row["y1"]), float(target_row["x2"]), float(target_row["y2"]))
+                from src.behaviour.preprocessing import preprocess_person_crop
+                success_crop, crop_image, _, _ = preprocess_person_crop(rgb_frame, bbox)
+
+                # Draw bounding box on full frame preview
+                annotated_frame = rgb_frame.copy()
+                x1, y1, x2, y2 = int(round(bbox[0])), int(round(bbox[1])), int(round(bbox[2])), int(round(bbox[3]))
+                cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), (46, 204, 113), 3)
+                cv2.putText(
+                    annotated_frame,
+                    f"Track ID {selected_track_id}",
+                    (x1, max(20, y1 - 10)),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.6,
+                    (46, 204, 113),
+                    2,
+                    cv2.LINE_AA,
+                )
+
+        # Two-column inspection layout
+        crop_col, feat_col = st.columns([1.0, 1.2], gap="large")
+
+        with crop_col:
+            st.markdown(f"##### Track ID {selected_track_id} Crop (Frame #{selected_frame_idx})")
+            if crop_image is not None:
+                st.image(
+                    crop_image,
+                    caption=f"Track ID {selected_track_id} — 224x224 RGB Person Crop",
+                    use_container_width=True,
+                )
+            else:
+                st.warning("Crop image preview could not be generated.")
+
+            st.markdown(f"- **Timestamp:** `{target_row['timestamp_seconds']:.2f}s`")
+            st.markdown(f"- **Bounding Box:** `[{target_row['x1']}, {target_row['y1']}, {target_row['x2']}, {target_row['y2']}]`")
+            st.markdown(f"- **Tracking Confidence:** `{target_row['confidence']:.2f}`")
+            st.markdown(f"- **Linked Observable Behaviour:** `{target_row['behaviour_class']}`")
+
+        with feat_col:
+            st.markdown("##### 512-Dimensional Feature Representation")
+            st.markdown(f"- **Model:** `ResNet18 (ImageNet Pretrained)`")
+            st.markdown(f"- **Vector Index in Array:** `{feat_idx}`")
+            st.markdown(f"- **Output Dimension:** `{len(feature_vector)}`")
+
+            # Numerical statistical properties
+            norm_val = float(np.linalg.norm(feature_vector))
+            mean_val = float(np.mean(feature_vector))
+            std_val = float(np.std(feature_vector))
+            min_val = float(np.min(feature_vector))
+            max_val = float(np.max(feature_vector))
+
+            st.markdown("###### Feature Vector Statistics")
+            stat_c1, stat_c2, stat_c3, stat_c4, stat_c5 = st.columns(5)
+            stat_c1.metric("L2 Norm", f"{norm_val:.2f}")
+            stat_c2.metric("Mean", f"{mean_val:.4f}")
+            stat_c3.metric("Std", f"{std_val:.4f}")
+            stat_c4.metric("Min", f"{min_val:.4f}")
+            stat_c5.metric("Max", f"{max_val:.4f}")
+
+            st.markdown("###### First 10 Numerical Values (Preview)")
+            preview_values = [round(float(v), 5) for v in feature_vector[:10]]
+            st.code(f"{preview_values}\n... [{len(feature_vector) - 10} additional dimensions truncated]", language="python")
+
+        st.markdown("---")
+
+        # 2D PCA Feature Space Visualization
+        st.subheader("📊 2D PCA Feature Space Distribution")
+        st.caption(
+            "Visualizes similarity in extracted visual feature space only. "
+            "Does NOT prove or infer mental engagement, cognitive focus, motivation, or boredom."
+        )
+
+        pca_pts, var_exp = compute_pca_2d(features_array)
+        if pca_pts is not None and len(pca_pts) >= 2:
+            pca_color_option = st.radio(
+                "Color PCA Points By:",
+                ["Track ID", "Observable Behaviour"],
+                index=0,
+                horizontal=True,
+                key="cnn_pca_color_option",
+            )
+            color_key = "behaviour_class" if pca_color_option == "Observable Behaviour" else "track_id"
+            fig = create_pca_scatter_figure(
+                projected=pca_pts,
+                metadata_df=meta_df,
+                color_by=color_key,
+                explained_variance=var_exp,
+            )
+            st.pyplot(fig)
+        else:
+            st.info("Insufficient feature samples (minimum 2 required) to compute 2D PCA projection.")
+
+        st.markdown("---")
+
+        # Features Dataset Preview & Downloads
+        st.subheader("📄 CNN Features Metadata (`cnn_features_metadata.csv`)")
+        st.caption(
+            "Complete tabular metadata mapping each row index of `cnn_features.npy` to its corresponding "
+            "frame ID, timestamp, Track ID, bounding box, and linked observable behaviour."
+        )
+
+        st.dataframe(meta_df, use_container_width=True, hide_index=True)
+
+        down_col1, down_col2 = st.columns(2)
+        with down_col1:
+            csv_bytes = meta_df.to_csv(index=False).encode("utf-8")
+            st.download_button(
+                label="📥 Download CNN Metadata CSV",
+                data=csv_bytes,
+                file_name=f"{video_id}_{CNN_METADATA_CSV_FILENAME}",
+                mime="text/csv",
+                help="Download tabular mapping linking feature vector indices to frame, track, and behaviour metadata.",
+                key="btn_download_cnn_metadata_csv",
+            )
+
+        with down_col2:
+            import io
+            npy_buffer = io.BytesIO()
+            np.save(npy_buffer, features_array)
+            npy_bytes = npy_buffer.getvalue()
+            st.download_button(
+                label="📥 Download CNN Features Array (.npy)",
+                data=npy_bytes,
+                file_name=f"{video_id}_{CNN_FEATURES_NPY_FILENAME}",
+                mime="application/octet-stream",
+                help="Download raw float32 NumPy binary feature array of shape (N, 512).",
+                key="btn_download_cnn_features_npy",
+            )
+
+
 def main():
     """Main application loop."""
     render_sidebar()
@@ -1471,6 +1873,12 @@ def main():
     # Feature 5: Observable Behaviour Recognition Section
     if saved_path and saved_path.exists():
         render_behaviour_recognition_section(saved_path)
+
+    st.markdown("---")
+
+    # Feature 6: CNN Visual Feature Extraction Section
+    if saved_path and saved_path.exists():
+        render_cnn_feature_extraction_section(saved_path)
 
 
 if __name__ == "__main__":

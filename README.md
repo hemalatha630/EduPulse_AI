@@ -30,19 +30,20 @@ The system focuses exclusively on verifiable, observable physical behaviours rec
 
 ---
 
-## 2. Technology Stack (Features 1, 2, 3 & 4)
+## 2. Technology Stack (Features 1, 2, 3, 4, 5 & 6)
 
 * **Programming Language:** Python 3.12+ (supports Python 3.11+)
 * **Web Application Framework:** Streamlit
 * **Computer Vision & Video Processing:** OpenCV (`opencv-python`)
 * **Object Detection & Deep Learning:** Ultralytics YOLO (`ultralytics`), PyTorch (`torch`, `torchvision`)
 * **Multi-Object Tracking:** ByteTrack & BoT-SORT (Linear Assignment Problem solver `lap`)
+* **Pretrained CNN Visual Backbone:** PyTorch Torchvision ResNet18 (512-dim visual embeddings)
 * **Visualization & Plotting:** Matplotlib (`matplotlib`), Pillow (`Pillow`)
-* **Numerical Computing:** NumPy
+* **Numerical Computing & SVD/PCA:** NumPy
 * **Data Structures & Processing:** Pandas
 * **Test Suite:** PyTest
 
-*(Future deep learning modules such as CNN behaviour classification and RNN/LSTM/GRU temporal modeling will be introduced in subsequent feature milestones).*
+*(Future sequence modeling modules such as RNN/LSTM/GRU will be introduced in Feature 7 & 8).*
 
 ---
 
@@ -51,54 +52,66 @@ The system focuses exclusively on verifiable, observable physical behaviours rec
 ```text
 EduPulse_AI/
 │
-├── app.py                          # Streamlit main application entry point (Features 1-4)
+├── app.py                              # Streamlit main application entry point (Features 1-6)
 │
-├── data/                           # Data storage (git-ignored for student privacy)
-│   ├── videos/                     # Uploaded raw classroom videos
-│   ├── frames/                     # Extracted and sampled video frames (<video_id>/)
-│   └── processed/                  # Processed metadata, detection, & tracking outputs (<video_id>/)
+├── data/                               # Data storage (git-ignored for student privacy)
+│   ├── videos/                         # Uploaded raw classroom videos
+│   ├── frames/                         # Extracted and sampled video frames (<video_id>/)
+│   └── processed/                      # Processed metadata, tracking, behaviours & CNN outputs (<video_id>/)
 │       └── <video_id>/
-│           ├── frame_metadata.csv  # Feature 2 chronological frame index
-│           ├── detections.csv      # Feature 3 per-frame bounding box coordinates
-│           └── tracks.csv          # Feature 4 persistent temporal track records
+│           ├── frame_metadata.csv      # Feature 2 chronological frame index
+│           ├── detections.csv          # Feature 3 per-frame bounding box coordinates
+│           ├── tracks.csv              # Feature 4 persistent temporal track records
+│           ├── behaviours.csv          # Feature 5 observable behaviour classifications
+│           ├── cnn_features.npy        # Feature 6 raw (N, 512) float32 feature array
+│           └── cnn_features_metadata.csv # Feature 6 spatial-temporal metadata mapping
 │
-├── models/                         # Model weights directory
-│   └── yolov8n.pt                  # Pretrained YOLOv8n detector (~6.2 MB)
+├── models/                             # Model weights directory
+│   └── yolov8n.pt                      # Pretrained YOLOv8n detector (~6.2 MB)
 │
-├── notebooks/                      # Research & exploratory notebooks
+├── notebooks/                          # Research & exploratory notebooks
 │
-├── src/                            # Modular source code
+├── src/                                # Modular source code
 │   ├── __init__.py
-│   ├── config.py                   # Central paths, sampling defaults, & tracking configs
-│   ├── video/                      # Video ingestion & frame extraction
+│   ├── config.py                       # Central paths, sampling defaults, CNN & tracking configs
+│   ├── video/                          # Video ingestion & frame extraction (Feature 1 & 2)
 │   │   ├── __init__.py
-│   │   ├── video_utils.py          # Video validation, metadata extraction, sanitization
-│   │   └── frame_extractor.py      # Chronological extraction, sampling, & metadata engine
-│   ├── preprocessing/              # Image validation, color handling, & resizing
+│   │   ├── video_utils.py              # Video validation, metadata extraction, sanitization
+│   │   └── frame_extractor.py          # Chronological extraction, sampling, & metadata engine
+│   ├── preprocessing/                  # Image validation, color handling, & resizing
 │   │   ├── __init__.py
-│   │   └── frame_preprocessor.py   # FramePreprocessor utility class
-│   ├── detection/                  # Student / Person Detection (Feature 3)
+│   │   └── frame_preprocessor.py       # FramePreprocessor utility class
+│   ├── detection/                      # Student / Person Detection (Feature 3)
 │   │   ├── __init__.py
-│   │   └── detector.py             # YOLOPersonDetector & detection pipeline
-│   ├── tracking/                   # Student / Person Tracking (Feature 4)
+│   │   └── detector.py                 # YOLOPersonDetector & detection pipeline
+│   ├── tracking/                       # Student / Person Tracking (Feature 4)
 │   │   ├── __init__.py
-│   │   └── tracker.py              # PersonTracker (ByteTrack/BoT-SORT), TrackResult, & trajectory engine
-│   ├── behaviour/                  # Observable behaviour classification (Feature 5 — upcoming)
-│   ├── cnn/                        # Spatial visual feature extraction (future)
-│   └── temporal/                   # Sequence modeling (RNN/LSTM/GRU) (future)
+│   │   └── tracker.py                  # PersonTracker (ByteTrack/BoT-SORT), TrackResult, & trajectory engine
+│   ├── behaviour/                      # Observable behaviour classification (Feature 5)
+│   │   ├── __init__.py
+│   │   ├── behaviour_classifier.py     # BehaviourClassifier & batch recognition pipeline
+│   │   ├── behaviour_labels.py         # Canonical class constants, palette & descriptions
+│   │   └── preprocessing.py            # Person crop extraction, clipping & normalization
+│   ├── cnn/                            # CNN Visual Feature Extraction (Feature 6)
+│   │   ├── __init__.py
+│   │   ├── feature_extractor.py        # CNNFeatureExtractor (ResNet18 512D) & batch extraction
+│   │   └── visualization.py            # NumPy SVD 2D PCA projection & scatter plotting
+│   └── temporal/                       # Sequence modeling (RNN/LSTM/GRU) (Feature 7 & 8)
 │
-├── results/                        # Evaluation logs and ablation outputs (future)
-├── tests/                          # Automated unit and integration tests
+├── results/                            # Evaluation logs and ablation outputs (future)
+├── tests/                              # Automated unit and integration tests (75 tests)
 │   ├── __init__.py
-│   ├── test_app.py                 # Streamlit UI integration tests (Features 1, 2, 3 & 4)
-│   ├── test_video_utils.py         # Video validation unit tests
-│   ├── test_frame_extractor.py     # Frame extraction, sampling, & preprocessor tests
-│   ├── test_detector.py            # YOLO person detection & annotation unit tests
-│   └── test_tracker.py             # Multi-object tracking, ID consistency, & trajectory unit tests
+│   ├── test_app.py                     # Streamlit UI integration tests (Features 1-6)
+│   ├── test_video_utils.py             # Video validation unit tests
+│   ├── test_frame_extractor.py         # Frame extraction, sampling, & preprocessor tests
+│   ├── test_detector.py                # YOLO person detection & annotation unit tests
+│   ├── test_tracker.py                 # Multi-object tracking, ID consistency, & trajectory tests
+│   ├── test_behaviour.py               # Observable behaviour recognition unit tests
+│   └── test_cnn.py                     # CNN ResNet18 loading, batch extraction, & PCA tests
 │
-├── requirements.txt                # Core dependencies
-├── .gitignore                      # Git ignore rules for video data & environment
-└── README.md                       # Project documentation
+├── requirements.txt                    # Core dependencies
+├── .gitignore                          # Git ignore rules for video data & environment
+└── README.md                           # Comprehensive project documentation
 ```
 
 ---
@@ -434,38 +447,112 @@ data/processed/<video_id>/behaviours.csv
 
 ---
 
-## 11. Automated Testing
+## 11. CNN Visual Feature Extraction (Feature 6)
 
-Run the comprehensive PyTest suite covering video validation, preprocessing, frame sampling, person detection, multi-object tracking, observable behaviour recognition, and Streamlit UI workflows:
+### Purpose & Rationale
+Feature 6 bridges spatial student tracking and future temporal sequence modeling by converting raw person image crops into compact, fixed-length **512-dimensional visual feature vectors**.
+
+```text
+Person Image Crop (224x224 RGB)
+              ↓
+    Pretrained ResNet18 CNN
+  (Final FC Layer → Identity)
+              ↓
+  Fixed 512-D Visual Embedding
+              ↓
+    Decoupled Storage Architecture
+  (.npy Binary Array + .csv Metadata)
+```
+
+### Pretrained CNN Model Selection: ResNet18
+The system employs **ResNet18** (`torchvision.models.resnet18` with ImageNet-1K pretrained weights) as a frozen visual feature extractor.
+
+**Why ResNet18 was selected:**
+1. **Fixed Feature Dimension (512D):** By replacing the final classification layer (`model.fc = nn.Identity()`), ResNet18 naturally outputs a 512-dimensional vector from its global average pooling layer.
+2. **Computational Efficiency & Low Latency:** With ~11.7 million parameters (compared to 25M+ for ResNet50 or 86M+ for ViT), ResNet18 executes efficiently on standard classroom computer hardware and laptops without requiring dedicated GPUs.
+3. **Scientific Reproducibility:** ResNet18 is a widely recognized standard baseline in computer vision and educational video analytics literature.
+4. **Hardware Agnostic:** Automatically utilizes CUDA acceleration when a compatible GPU is available; gracefully and safely executes on CPU when running in standard academic environments.
+
+> **Important Conceptual Distinction:**
+> Feature 6 uses a pretrained CNN as a visual feature extractor for tracked person regions. The extracted feature vectors represent visual information and do not directly represent internal student mental states.
+> 
+> Temporal modelling using RNN/LSTM/GRU will be implemented in later features.
+
+### Person Crop Preprocessing & Batch Extraction
+For every tracked student in every extracted frame:
+1. **Boundary Clipping:** Bounding box coordinates $(x_1, y_1, x_2, y_2)$ are safely clipped to frame boundaries $[0, W]$ and $[0, H]$.
+2. **Geometry Validation:** Crops with width $< 20\text{px}$ or height $< 30\text{px}$ are safely filtered and recorded as skipped crops.
+3. **Bilinear Resizing:** Crops are resized to the CNN input standard $224 \times 224$ pixels.
+4. **ImageNet Normalization:** Pixel intensities are converted to $[0.0, 1.0]$ and standardized:
+   $$\mu = [0.485, 0.456, 0.406], \quad \sigma = [0.229, 0.224, 0.225]$$
+5. **Batched Forward Pass:** Crops within a frame are assembled into mini-batches (default size: 16) and passed through the model under `torch.no_grad()` evaluation mode for high throughput.
+
+### Decoupled Storage Architecture
+To prevent bloating tabular CSV files with 512 numerical columns, features are stored using a clean decoupled design:
+
+```text
+data/processed/<video_id>/
+├── cnn_features.npy            # Raw float32 binary matrix of shape (N, 512)
+└── cnn_features_metadata.csv   # Structured mapping table linking rows 0..N-1
+```
+
+#### Metadata Schema (`cnn_features_metadata.csv`)
+| Column | Type | Description |
+| :--- | :--- | :--- |
+| `video_id` | `str` | Video identifier stem |
+| `frame_id` | `int` | Original video frame index |
+| `extracted_frame_index` | `int` | Chronological extracted frame number |
+| `timestamp_seconds` | `float` | Elapsed playback time in seconds |
+| `frame_filename` | `str` | Frame image file name (`frame_000001.jpg`) |
+| `track_id` | `int` | Persistent student Track ID from Feature 4 |
+| `confidence` | `float` | Tracking detection confidence score |
+| `x1, y1, x2, y2` | `float` | Spatial bounding box coordinates |
+| `feature_index` | `int` | Exact 0-indexed row position in `cnn_features.npy` |
+| `feature_path` | `str` | Relative reference to feature binary (`cnn_features.npy`) |
+| `behaviour_class` | `str` | Linked observable behaviour from Feature 5 |
+| `behaviour_confidence` | `float` | Classification confidence of linked behaviour |
+
+### Interactive Streamlit Interface
+* **CNN Hardware & Model Controls:** Live detection of compute hardware (`CPU` or `CUDA`), feature dimension readout (`512D`), batch size selector.
+* **Flexible Frame Range Processing:** Choose between *All extracted frames*, *Sample frames (first N)*, or *Custom frame range*.
+* **Visual Feature Inspector:** Select any processed frame and tracked student to view their $224 \times 224$ visual crop alongside their 512-D vector preview and statistical properties (L2 norm, mean, std, min, max).
+* **2D PCA Feature Space Distribution:** Interactive 2D projection computed via pure NumPy SVD (zero scikit-learn dependency), visualizable by Track ID or Observable Behaviour.
+* **Artifact Downloads:** One-click download buttons for both `cnn_features_metadata.csv` and raw binary `cnn_features.npy`.
+
+---
+
+## 12. Automated Testing
+
+Run the complete PyTest suite covering video validation, preprocessing, frame sampling, person detection, multi-object tracking, observable behaviour recognition, CNN visual feature extraction, and Streamlit UI workflows:
 
 ```bash
 pytest tests/ -v
 ```
 
-The **63-test automated suite** covers:
+The **75-test automated suite** covers:
 * `test_video_utils.py` (14 tests): Filename sanitization, path traversal prevention, extension validation, OpenCV decodability, empty/corrupt file rejection, metadata extraction.
 * `test_frame_extractor.py` (13 tests): Image validation, color conversion, resizing, chronological timestamp ordering, sampling ratios, CSV schema verification, cache handling.
 * `test_detector.py` (7 tests): YOLO model initialization, person detection inference on classroom scenes, confidence threshold filtering, bounding box rendering, empty/zero-person frame handling, invalid inputs, and batch pipeline execution.
 * `test_tracker.py` (9 tests): Tracker initialization (ByteTrack & BoT-SORT), persistent color generation, consecutive frame tracking continuity, confidence threshold filtering, zero-person handling, trajectory rendering, tracker reset, and end-to-end `tracks.csv` schema validation.
 * `test_behaviour.py` (12 tests): Target behaviour labels & metadata, person crop preprocessing & clipping, invalid crop rejection, prototype mode initialization, visual heuristic prediction, peer proximity logic, blur/unknown handling, visual badge drawing, mock PyTorch model forward pass, and end-to-end pipeline execution with `behaviours.csv` validation.
-* `test_app.py` (8 tests): Streamlit end-to-end UI integration tests covering initial render, file upload, metric cards, extraction button triggers, detection workflows, Feature 4 tracking workflows, Feature 5 behaviour recognition workflows, previews, and corrupted upload handling.
+* `test_cnn.py` (11 tests): ResNet18 model loading, classification head removal, CPU/CUDA device auto-detection, single-crop extraction (512D), batch extraction (B, 512), invalid/empty/out-of-bounds crop safety, end-to-end pipeline execution on synthetic video sequences, temporal order preservation, behaviour label linking, and 2D PCA projection/figure generation.
+* `test_app.py` (9 tests): Streamlit end-to-end UI integration tests covering initial render, file upload, metric cards, extraction button triggers, detection workflows, Feature 4 tracking workflows, Feature 5 behaviour recognition workflows, Feature 6 CNN extraction workflows, and corrupted upload handling.
 
 ---
 
-## 12. Current Limitations (Features 1–5 Scope)
+## 13. Current Limitations (Features 1–6 Scope)
 
-Features 1 through 5 focus on **Classroom Video Ingestion, Preprocessing, Frame Extraction, Person Detection, Multi-Object Tracking, and Observable Behaviour Recognition**.
+Features 1 through 6 focus on **Classroom Video Ingestion, Preprocessing, Frame Extraction, Person Detection, Multi-Object Tracking, Observable Behaviour Recognition, and CNN Visual Feature Extraction**.
 
 Current limitations:
-* CNN visual feature extraction as a dedicated representation layer is not yet active (reserved for Feature 6).
-* Temporal sequence modeling (RNN / LSTM / GRU) is not yet implemented (Feature 7 & 8).
-* Behaviour classifications represent frame-level and track-level observations, not predictive temporal engagement models.
-* Track IDs represent temporary spatial paths, not long-term student identity or attendance.
-* The classifier active mode is a prototype heuristic pending full training on a large-scale labelled classroom dataset.
+* Pretrained ImageNet features capture general visual representations (posture, objects, appearance) but have not been fine-tuned on custom classroom datasets.
+* Temporal sequence modeling (RNN / LSTM / GRU) is not yet implemented (scheduled for Features 7 & 8).
+* Feature vectors represent visual spatial snapshots, not mental engagement or internal cognitive states.
+* Feature sequences have not yet been framed into sliding temporal windows.
 
 ---
 
-## 13. Future Research Pipeline Roadmap
+## 14. Future Research Pipeline Roadmap
 
 The subsequent development phases will follow this structured academic pipeline:
 
@@ -480,9 +567,9 @@ Student Tracking (ByteTrack / BoT-SORT Multi-Object Tracking) (Feature 4 — Com
    ↓
 Observable Behaviour Recognition (Spatial Action Analysis) (Feature 5 — Completed)
    ↓
-CNN Visual Feature Extraction (Spatial Representations) (Feature 6 — Upcoming)
+CNN Visual Feature Extraction (Spatial Representations) (Feature 6 — Completed)
    ↓
-Temporal Sequence Creation (Sliding Window Time Sequences) (Feature 7)
+Temporal Sequence Creation (Sliding Window Time Sequences) (Feature 7 — Upcoming)
    ↓
 Sequence Modeling (RNN / LSTM / GRU) (Feature 8)
    ↓

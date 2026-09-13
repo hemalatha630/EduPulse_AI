@@ -80,9 +80,9 @@ class ExtractionSummary:
         return data
 
 
-def derive_video_id(video_path: Path) -> str:
+def derive_video_id(video_path: Path | str) -> str:
     """Generate a clean, safe video identifier based on the file stem."""
-    raw_stem = video_path.stem
+    raw_stem = Path(video_path).stem
     safe_stem = sanitize_filename(f"{raw_stem}.mp4")
     video_id = Path(safe_stem).stem
     return video_id or "classroom_video"
