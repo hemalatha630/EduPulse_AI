@@ -45,29 +45,40 @@ MIN_CROP_WIDTH = 20
 MIN_CROP_HEIGHT = 30
 UNKNOWN_BEHAVIOUR = "Unknown / Uncertain"
 
+# Canonical Behaviour Class Constants
+CLASS_LOOKING_TOWARD_INSTRUCTION = "Looking toward the instructional activity"
+CLASS_READING_WRITING = "Reading/writing"
+CLASS_INTERACTING_WITH_PEERS = "Interacting with peers"
+CLASS_LOOKING_AWAY = "Looking away"
+CLASS_MOBILE_DEVICE_ACTIVITY = "Mobile-device activity"
+CLASS_HEAD_DOWN = "Head-down behaviour"
+CLASS_UNKNOWN = UNKNOWN_BEHAVIOUR
+
 # Project Metadata
 PROJECT_TITLE = "Temporal Learning-Engagement Profiling from Classroom Videos"
 PROJECT_SHORT_TITLE = "EduPulse AI"
 
 # Research Scope: Observable Learning-Related Behaviours
 TARGET_OBSERVABLE_BEHAVIOURS = [
-    "Looking toward the instructional activity",
-    "Reading/writing",
-    "Interacting with peers",
-    "Looking away",
-    "Mobile-device activity",
-    "Head-down behaviour",
+    CLASS_LOOKING_TOWARD_INSTRUCTION,
+    CLASS_READING_WRITING,
+    CLASS_INTERACTING_WITH_PEERS,
+    CLASS_LOOKING_AWAY,
+    CLASS_MOBILE_DEVICE_ACTIVITY,
+    CLASS_HEAD_DOWN,
 ]
+
+ALL_OBSERVABLE_BEHAVIOURS = TARGET_OBSERVABLE_BEHAVIOURS + [CLASS_UNKNOWN]
 
 # High-contrast color palette for behaviour visualization (RGB tuples & Hex strings)
 BEHAVIOUR_COLORS = {
-    "Looking toward the instructional activity": {"rgb": (46, 204, 113), "hex": "#2ECC71"},  # Green
-    "Reading/writing": {"rgb": (52, 152, 219), "hex": "#3498DB"},                            # Blue
-    "Interacting with peers": {"rgb": (155, 89, 182), "hex": "#9B59B6"},                     # Purple
-    "Looking away": {"rgb": (243, 156, 18), "hex": "#F39C12"},                               # Amber
-    "Mobile-device activity": {"rgb": (231, 76, 60), "hex": "#E74C3C"},                       # Red
-    "Head-down behaviour": {"rgb": (230, 126, 34), "hex": "#E67E22"},                         # Orange
-    "Unknown / Uncertain": {"rgb": (149, 165, 166), "hex": "#95A5A6"},                        # Gray
+    CLASS_LOOKING_TOWARD_INSTRUCTION: {"rgb": (46, 204, 113), "hex": "#2ECC71"},  # Green
+    CLASS_READING_WRITING: {"rgb": (52, 152, 219), "hex": "#3498DB"},             # Blue
+    CLASS_INTERACTING_WITH_PEERS: {"rgb": (155, 89, 182), "hex": "#9B59B6"},      # Purple
+    CLASS_LOOKING_AWAY: {"rgb": (243, 156, 18), "hex": "#F39C12"},                # Amber
+    CLASS_MOBILE_DEVICE_ACTIVITY: {"rgb": (231, 76, 60), "hex": "#E74C3C"},        # Red
+    CLASS_HEAD_DOWN: {"rgb": (230, 126, 34), "hex": "#E67E22"},                  # Orange
+    CLASS_UNKNOWN: {"rgb": (149, 165, 166), "hex": "#95A5A6"},                    # Gray
 }
 
 # Explicitly Excluded Claims (Scientific rigor & ethical boundaries)
