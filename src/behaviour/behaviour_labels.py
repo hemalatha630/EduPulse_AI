@@ -5,22 +5,25 @@ the fallback uncertain state, color palettes, and strict research boundary defin
 """
 
 from typing import Dict, List, Tuple
-from src.config import BEHAVIOUR_COLORS, TARGET_OBSERVABLE_BEHAVIOURS, UNKNOWN_BEHAVIOUR
-
-# Canonical behaviour class labels
-CLASS_LOOKING_TOWARD_INSTRUCTION = "Looking toward the instructional activity"
-CLASS_READING_WRITING = "Reading/writing"
-CLASS_INTERACTING_WITH_PEERS = "Interacting with peers"
-CLASS_LOOKING_AWAY = "Looking away"
-CLASS_MOBILE_DEVICE_ACTIVITY = "Mobile-device activity"
-CLASS_HEAD_DOWN = "Head-down behaviour"
-CLASS_UNKNOWN = UNKNOWN_BEHAVIOUR
+from src.config import (
+    ALL_OBSERVABLE_BEHAVIOURS,
+    BEHAVIOUR_COLORS,
+    CLASS_HEAD_DOWN,
+    CLASS_INTERACTING_WITH_PEERS,
+    CLASS_LOOKING_AWAY,
+    CLASS_LOOKING_TOWARD_INSTRUCTION,
+    CLASS_MOBILE_DEVICE_ACTIVITY,
+    CLASS_READING_WRITING,
+    CLASS_UNKNOWN,
+    TARGET_OBSERVABLE_BEHAVIOURS,
+    UNKNOWN_BEHAVIOUR,
+)
 
 # The 6 defined research target classes
 TARGET_BEHAVIOUR_CLASSES: List[str] = list(TARGET_OBSERVABLE_BEHAVIOURS)
 
 # All valid classes including the fallback unknown/uncertain state
-ALL_BEHAVIOUR_CLASSES: List[str] = TARGET_BEHAVIOUR_CLASSES + [CLASS_UNKNOWN]
+ALL_BEHAVIOUR_CLASSES: List[str] = list(ALL_OBSERVABLE_BEHAVIOURS)
 
 # Observable visual evidence and research boundaries for each category
 BEHAVIOUR_DESCRIPTIONS: Dict[str, Dict[str, str]] = {

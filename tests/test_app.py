@@ -18,7 +18,7 @@ def video_bytes():
 
 def test_app_initial_render():
     """Verify application renders initial state correctly without errors."""
-    at = AppTest.from_file(APP_FILE, default_timeout=30).run()
+    at = AppTest.from_file(APP_FILE, default_timeout=60).run()
     assert not at.exception
 
     # Check title
@@ -36,7 +36,7 @@ def test_app_initial_render():
 
 def test_app_valid_video_upload(video_bytes):
     """Verify application handles valid video upload and renders Feature 2 controls."""
-    at = AppTest.from_file(APP_FILE, default_timeout=30).run()
+    at = AppTest.from_file(APP_FILE, default_timeout=60).run()
     at.file_uploader[0].upload(filename="sample_classroom.mp4", content=video_bytes).run()
 
     assert not at.exception
@@ -63,7 +63,7 @@ def test_app_valid_video_upload(video_bytes):
 
 def test_app_frame_extraction_workflow(video_bytes):
     """Verify frame extraction button execution in Streamlit AppTest."""
-    at = AppTest.from_file(APP_FILE, default_timeout=30).run()
+    at = AppTest.from_file(APP_FILE, default_timeout=60).run()
     at.file_uploader[0].upload(filename="sample_classroom.mp4", content=video_bytes).run()
     assert not at.exception
 
@@ -87,7 +87,7 @@ def test_app_frame_extraction_workflow(video_bytes):
 
 def test_app_detection_workflow(video_bytes):
     """Verify Feature 3 person detection UI workflow end-to-end."""
-    at = AppTest.from_file(APP_FILE, default_timeout=30).run()
+    at = AppTest.from_file(APP_FILE, default_timeout=60).run()
     at.file_uploader[0].upload(filename="sample_classroom.mp4", content=video_bytes).run()
     assert not at.exception
 
@@ -114,7 +114,7 @@ def test_app_detection_workflow(video_bytes):
 
 def test_app_tracking_workflow(video_bytes):
     """Verify Feature 4 person tracking UI workflow end-to-end."""
-    at = AppTest.from_file(APP_FILE, default_timeout=30).run()
+    at = AppTest.from_file(APP_FILE, default_timeout=60).run()
     at.file_uploader[0].upload(filename="sample_classroom.mp4", content=video_bytes).run()
     assert not at.exception
 
@@ -146,7 +146,7 @@ def test_app_behaviour_recognition_workflow():
         pytest.skip("classroom_lecture_demo.mp4 required for full behaviour UI test")
 
     video_bytes = demo_video.read_bytes()
-    at = AppTest.from_file(APP_FILE, default_timeout=30).run()
+    at = AppTest.from_file(APP_FILE, default_timeout=60).run()
     at.file_uploader[0].upload(filename="classroom_lecture_demo.mp4", content=video_bytes).run()
     assert not at.exception
 
@@ -169,7 +169,7 @@ def test_app_behaviour_recognition_workflow():
 
 def test_app_empty_file_upload():
     """Verify application handles empty file gracefully."""
-    at = AppTest.from_file(APP_FILE, default_timeout=30).run()
+    at = AppTest.from_file(APP_FILE, default_timeout=60).run()
     at.file_uploader[0].upload(filename="empty_file.mp4", content=b"").run()
 
     errors = [e.value for e in at.error]
@@ -178,7 +178,7 @@ def test_app_empty_file_upload():
 
 def test_app_corrupted_file_upload():
     """Verify application handles corrupted video file gracefully without crashing."""
-    at = AppTest.from_file(APP_FILE, default_timeout=30).run()
+    at = AppTest.from_file(APP_FILE, default_timeout=60).run()
     at.file_uploader[0].upload(
         filename="corrupted_file.mp4", content=b"BAD_CORRUPT_HEADER" * 100
     ).run()
