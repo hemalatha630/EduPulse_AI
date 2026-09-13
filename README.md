@@ -353,37 +353,119 @@ data/processed/<video_id>/tracks.csv
 
 ---
 
-## 10. Automated Testing
+## 10. Feature 5 — Observable Behaviour Recognition
 
-Run the comprehensive PyTest suite covering video validation, preprocessing, frame sampling, person detection, multi-object tracking, and Streamlit UI workflows:
+Feature 5 recognizes **observable learning-related behaviours** for each tracked person in classroom video frames. It consumes persistent bounding boxes from Feature 4 (`tracks.csv`), safely crops and normalizes person regions, and assigns one of six canonical behaviour categories (or an uncertain state) based strictly on visible evidence.
+
+### Why Observable Behaviour Recognition?
+In educational research, learning engagement begins with observable actions. Before applying temporal sequence models (RNN/LSTM/GRU in Features 7–8), the system must extract reliable, objective, frame-level classifications of what visible actions a student is performing over time.
+
+### The Six Target Observable Behaviour Classes
+The system classifies exclusively observable physical evidence:
+
+1. **Looking toward the instructional activity:** Body or head oriented toward the instructor, presentation screen, or front blackboard area.
+2. **Reading/writing:** Head angled downward toward a notebook, book, or paper surface with visible hand or arm posture associated with writing or reading.
+3. **Interacting with peers:** Head or upper body oriented toward an adjacent or nearby student with collaborative or conversational proximity.
+4. **Looking away:** Head or torso oriented substantially away from instructional activity toward windows, doors, or lateral periphery.
+5. **Mobile-device activity:** Visible handheld mobile phone or tablet, or gaze directed downward into a handheld device in the lap or desk region.
+6. **Head-down behaviour:** Head resting directly on desk surface, arms folded under head, or face hidden downward without reading/writing movement.
+7. **Unknown / Uncertain:** Assigned when visual evidence is ambiguous, severe occlusion occurs, crops are blurry/low-resolution, or classifier confidence falls below threshold.
+
+### Strict Research & Ethical Boundaries
+> [!IMPORTANT]
+> **Feature 5 classifies strictly OBSERVABLE behaviour only. It DOES NOT infer internal mental, emotional, or cognitive states.**
+> - **Zero Emotional/Cognitive Labels:** Labels such as *bored*, *motivated*, *sad*, *happy*, *intelligent*, *confused*, *mentally engaged*, or *understanding* are strictly forbidden.
+> - **Observable Action $\ne$ Mental State:**
+>   - *Looking Away* does NOT prove a student is bored or disengaged.
+>   - *Looking toward instruction* does NOT prove a student understands the material.
+>   - *Mobile-device activity* describes an observed object and posture, not student motivation.
+> - **Confidence Interpretation:** Classification confidence measures the model's certainty regarding the visual category, **not** the student's degree of engagement or attention.
+> - **Privacy Preservation:** Anonymous Track IDs from Feature 4 are retained; facial recognition, biometric matching, and demographic profiling are strictly excluded.
+
+### Modular Architecture: Situation A vs. Situation B
+To ensure academic honesty and reproducibility, Feature 5 supports two operating situations:
+
+* **Situation A (Trained PyTorch Model):** If trained neural network weights exist (e.g. `models/behaviour_classifier.pt`), the classifier loads the model and performs forward inference on normalized crops.
+* **Situation B (Prototype / Baseline Heuristic — Active):** Because labelled classroom behaviour datasets are proprietary or in collection, the system operates in a transparent **Prototype / Baseline Heuristic Pipeline**. It evaluates measurable visual cues:
+  - **Peer Proximity:** Euclidean distance between tracked centroids within the same frame to detect collaborative alignment ($d < 1.35 \times \text{width}$).
+  - **Upper Body / Head Skew:** Horizontal center of mass in head region to detect lateral gaze (*Looking Away*).
+  - **Lap/Desk Surface Texture:** Laplacian and Canny edge density in lower crop region to distinguish active *Reading/Writing* from *Head-Down* postures.
+  - **High-Contrast Lap Objects:** Luminance ratio in hand region to flag *Mobile-Device Activity*.
+  - **Threshold Rejection:** Low confidence, blur, or sub-minimum crops default cleanly to *Unknown / Uncertain*.
+  - **No Fake Accuracy Claims:** The system explicitly labels its active mode in the UI and never claims fabricated ML benchmarks.
+
+### Person Crop Preprocessing
+Located in `src/behaviour/preprocessing.py`:
+* **Safe Coordinate Clipping:** Clips bounding box coordinates strictly to frame dimensions `[0, W]` and `[0, H]`.
+* **Geometry Validation:** Rejects inverted, zero-area, or crops smaller than $20 \times 30$ pixels without crashing.
+* **Standard Resizing:** Resizes crops to $224 \times 224$ pixels via bilinear interpolation.
+* **PyTorch Normalization:** Outputs standard ImageNet-normalized tensors `(1, 3, 224, 224)` ready for CNN feature extraction in Feature 6.
+
+### Behaviour Output Storage & Schema (`behaviours.csv`)
+Saved to:
+```text
+data/processed/<video_id>/behaviours.csv
+```
+
+| Field | Type | Description |
+| :--- | :--- | :--- |
+| `video_id` | `str` | Video identifier derived from filename |
+| `frame_id` | `int` | 0-indexed position in source video stream |
+| `extracted_frame_index` | `int` | 1-indexed sequential frame number in extracted frames |
+| `timestamp_seconds` | `float` | Elapsed time in source video (seconds) |
+| `frame_filename` | `str` | Name of associated image (`frame_000001.jpg`) |
+| `track_id` | `int` | Anonymous integer Track ID from Feature 4 |
+| `behaviour_class` | `str` | Classified observable behaviour category |
+| `confidence` | `float` | Classification confidence score ($0.0 \le c \le 1.0$) |
+| `x1` | `float` | Bounding box top-left $X$ coordinate |
+| `y1` | `float` | Bounding box top-left $Y$ coordinate |
+| `x2` | `float` | Bounding box bottom-right $X$ coordinate |
+| `y2` | `float` | Bounding box bottom-right $Y$ coordinate |
+| `visual_evidence` | `str` | Brief explanation of visual cues supporting the classification |
+
+### Interactive Streamlit UI Capabilities
+1. **Classifier Mode Indicator:** Displays active inference mode (*Prototype / Baseline Heuristic* or *PyTorch Neural Model*).
+2. **Confidence Threshold Slider:** Filter predictions below $\tau$ into *Unknown / Uncertain* to maintain scientific rigor.
+3. **Summary Metric Cards:** Total observations, dominant observable behaviour, unique tracks covered, and unknown/uncertain count.
+4. **Distribution Chart:** Horizontal bar chart displaying observation frequencies across all behaviour classes with distinct color mapping.
+5. **Frame Visualizer:** Interactive slider displaying frames with colored bounding boxes, Track IDs, and behaviour badges (`ID 1: Interacting with peers | Conf: 0.77`).
+6. **Track-Level Chronological Sequence Inspector:** Inspect individual student behaviour timelines over time (with prominent disclaimer that this is simple observation logging, not temporal modeling).
+7. **Dataset Download:** Complete `behaviours.csv` preview table with a one-click CSV download button.
+
+---
+
+## 11. Automated Testing
+
+Run the comprehensive PyTest suite covering video validation, preprocessing, frame sampling, person detection, multi-object tracking, observable behaviour recognition, and Streamlit UI workflows:
 
 ```bash
 pytest tests/ -v
 ```
 
-The 50-test automated suite covers:
+The **63-test automated suite** covers:
 * `test_video_utils.py` (14 tests): Filename sanitization, path traversal prevention, extension validation, OpenCV decodability, empty/corrupt file rejection, metadata extraction.
 * `test_frame_extractor.py` (13 tests): Image validation, color conversion, resizing, chronological timestamp ordering, sampling ratios, CSV schema verification, cache handling.
 * `test_detector.py` (7 tests): YOLO model initialization, person detection inference on classroom scenes, confidence threshold filtering, bounding box rendering, empty/zero-person frame handling, invalid inputs, and batch pipeline execution.
 * `test_tracker.py` (9 tests): Tracker initialization (ByteTrack & BoT-SORT), persistent color generation, consecutive frame tracking continuity, confidence threshold filtering, zero-person handling, trajectory rendering, tracker reset, and end-to-end `tracks.csv` schema validation.
-* `test_app.py` (7 tests): Streamlit end-to-end UI integration tests covering initial render, file upload, metric cards, extraction button triggers, detection workflows, Feature 4 tracking workflows, previews, and corrupted upload handling.
+* `test_behaviour.py` (12 tests): Target behaviour labels & metadata, person crop preprocessing & clipping, invalid crop rejection, prototype mode initialization, visual heuristic prediction, peer proximity logic, blur/unknown handling, visual badge drawing, mock PyTorch model forward pass, and end-to-end pipeline execution with `behaviours.csv` validation.
+* `test_app.py` (8 tests): Streamlit end-to-end UI integration tests covering initial render, file upload, metric cards, extraction button triggers, detection workflows, Feature 4 tracking workflows, Feature 5 behaviour recognition workflows, previews, and corrupted upload handling.
 
 ---
 
-## 11. Current Limitations (Features 1, 2, 3 & 4 Scope)
+## 12. Current Limitations (Features 1–5 Scope)
 
-Features 1, 2, 3, and 4 focus exclusively on **Classroom Video Ingestion, Preprocessing, Frame Extraction, Person Detection, and Multi-Object Tracking**.
+Features 1 through 5 focus on **Classroom Video Ingestion, Preprocessing, Frame Extraction, Person Detection, Multi-Object Tracking, and Observable Behaviour Recognition**.
 
 Current limitations:
-* Observable classroom behaviour classification is not yet implemented (reserved for Feature 5).
-* CNN visual feature extraction is not yet active (Feature 6).
-* Temporal sequence modeling (RNN / LSTM / GRU) is not yet active (Feature 7).
-* Track IDs represent temporary spatial paths, not long-term student attendance or biometric identity.
-* Cloud / cluster distributed processing is not yet enabled.
+* CNN visual feature extraction as a dedicated representation layer is not yet active (reserved for Feature 6).
+* Temporal sequence modeling (RNN / LSTM / GRU) is not yet implemented (Feature 7 & 8).
+* Behaviour classifications represent frame-level and track-level observations, not predictive temporal engagement models.
+* Track IDs represent temporary spatial paths, not long-term student identity or attendance.
+* The classifier active mode is a prototype heuristic pending full training on a large-scale labelled classroom dataset.
 
 ---
 
-## 12. Future Research Pipeline Roadmap
+## 13. Future Research Pipeline Roadmap
 
 The subsequent development phases will follow this structured academic pipeline:
 
@@ -396,9 +478,9 @@ Student Detection (YOLO / Spatial Bounding Boxes) (Feature 3 — Completed)
    ↓
 Student Tracking (ByteTrack / BoT-SORT Multi-Object Tracking) (Feature 4 — Completed)
    ↓
-Observable Behaviour Recognition (Spatial Action Analysis) (Feature 5 — Upcoming)
+Observable Behaviour Recognition (Spatial Action Analysis) (Feature 5 — Completed)
    ↓
-CNN Visual Feature Extraction (Spatial Representations) (Feature 6)
+CNN Visual Feature Extraction (Spatial Representations) (Feature 6 — Upcoming)
    ↓
 Temporal Sequence Creation (Sliding Window Time Sequences) (Feature 7)
    ↓
@@ -414,3 +496,4 @@ Ablation Studies & Temporal Error Analysis (Feature 12)
    ↓
 Final Interactive Analytics Dashboard (Feature 13)
 ```
+

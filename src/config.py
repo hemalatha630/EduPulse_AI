@@ -37,6 +37,14 @@ DEFAULT_TRACKING_CONF_THRESHOLD = 0.25
 DEFAULT_TRAJECTORY_MAX_POINTS = 30
 TRACKS_CSV_FILENAME = "tracks.csv"
 
+# Feature 5 Configuration: Observable Behaviour Recognition
+DEFAULT_BEHAVIOUR_CONF_THRESHOLD = 0.40
+BEHAVIOURS_CSV_FILENAME = "behaviours.csv"
+DEFAULT_CROP_SIZE = (224, 224)
+MIN_CROP_WIDTH = 20
+MIN_CROP_HEIGHT = 30
+UNKNOWN_BEHAVIOUR = "Unknown / Uncertain"
+
 # Project Metadata
 PROJECT_TITLE = "Temporal Learning-Engagement Profiling from Classroom Videos"
 PROJECT_SHORT_TITLE = "EduPulse AI"
@@ -50,6 +58,17 @@ TARGET_OBSERVABLE_BEHAVIOURS = [
     "Mobile-device activity",
     "Head-down behaviour",
 ]
+
+# High-contrast color palette for behaviour visualization (RGB tuples & Hex strings)
+BEHAVIOUR_COLORS = {
+    "Looking toward the instructional activity": {"rgb": (46, 204, 113), "hex": "#2ECC71"},  # Green
+    "Reading/writing": {"rgb": (52, 152, 219), "hex": "#3498DB"},                            # Blue
+    "Interacting with peers": {"rgb": (155, 89, 182), "hex": "#9B59B6"},                     # Purple
+    "Looking away": {"rgb": (243, 156, 18), "hex": "#F39C12"},                               # Amber
+    "Mobile-device activity": {"rgb": (231, 76, 60), "hex": "#E74C3C"},                       # Red
+    "Head-down behaviour": {"rgb": (230, 126, 34), "hex": "#E67E22"},                         # Orange
+    "Unknown / Uncertain": {"rgb": (149, 165, 166), "hex": "#95A5A6"},                        # Gray
+}
 
 # Explicitly Excluded Claims (Scientific rigor & ethical boundaries)
 EXCLUDED_INTERNAL_STATES = [
