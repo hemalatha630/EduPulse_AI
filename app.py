@@ -20,13 +20,17 @@ import streamlit as st
 from src.config import (
     DEFAULT_CONFIDENCE_THRESHOLD,
     DEFAULT_SAMPLING_INTERVAL,
+    DEFAULT_TRACKER,
+    DEFAULT_TRACKING_CONF_THRESHOLD,
     DEFAULT_YOLO_MODEL,
     EXCLUDED_INTERNAL_STATES,
     FRAMES_DIR,
     PROCESSED_DIR,
     PROJECT_TITLE,
     SUPPORTED_EXTENSIONS,
+    SUPPORTED_TRACKERS,
     TARGET_OBSERVABLE_BEHAVIOURS,
+    TRACKS_CSV_FILENAME,
     VIDEOS_DIR,
     ensure_directories,
 )
@@ -37,6 +41,12 @@ from src.detection.detector import (
     run_detection_on_frames,
 )
 from src.preprocessing.frame_preprocessor import FramePreprocessor
+from src.tracking.tracker import (
+    PersonTracker,
+    TrackResult,
+    TrackingSummary,
+    run_tracking_on_frames,
+)
 from src.video.frame_extractor import (
     ExtractionConfig,
     ExtractionSummary,
@@ -53,7 +63,7 @@ from src.video.video_utils import (
 
 # Page configuration
 st.set_page_config(
-    page_title="EduPulse AI | Classroom Video Input, Frames & Person Detection",
+    page_title="EduPulse AI | Classroom Video Input, Frames, Detection & Tracking",
     page_icon="🎓",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -69,6 +79,16 @@ def get_yolo_detector(model_name: str = DEFAULT_YOLO_MODEL) -> YOLOPersonDetecto
     detector = YOLOPersonDetector(model_name=model_name)
     detector.load_model()
     return detector
+
+
+@st.cache_resource
+def get_person_tracker(
+    model_name: str = DEFAULT_YOLO_MODEL, tracker_type: str = DEFAULT_TRACKER
+) -> PersonTracker:
+    """Cache and return the loaded PersonTracker instance."""
+    tracker = PersonTracker(model_name=model_name, tracker_type=tracker_type)
+    tracker.load_model()
+    return tracker
 
 
 def render_sidebar():
@@ -99,8 +119,9 @@ def render_sidebar():
         st.subheader("⚙️ Current Phase")
         st.success("✅ **Feature 1: Video Ingestion & Metadata**")
         st.success("✅ **Feature 2: Frame Extraction & Preprocessing**")
-        st.success("🚀 **Feature 3: Student / Person Detection**")
-        st.caption("Next stages (Tracking, Behaviour CNN/RNN) unlock in future milestones.")
+        st.success("✅ **Feature 3: Student / Person Detection**")
+        st.success("🚀 **Feature 4: Student / Person Tracking**")
+        st.caption("Next stages (Behaviour Classification, CNN/RNN Modeling) unlock in future milestones.")
 
 
 def render_header():
@@ -108,7 +129,7 @@ def render_header():
     st.title(PROJECT_TITLE)
     st.markdown(
         "Upload a classroom recording (`.mp4`, `.avi`, `.mov`, `.mkv`), inspect stream properties, "
-        "extract chronological preprocessed frames, and detect visible people using YOLO object detection."
+        "extract chronological preprocessed frames, detect students, and track people across time with persistent Track IDs."
     )
     st.divider()
 
@@ -613,6 +634,367 @@ def render_detection_section(video_path: Path):
         )
 
 
+def render_tracking_summary(summary: TrackingSummary):
+    """Display structured summary cards and metrics after multi-object tracking."""
+    st.subheader("📋 Tracking Summary")
+
+    metric_c1, metric_c2, metric_c3, metric_c4 = st.columns(4)
+    with metric_c1:
+        st.metric("Frames Processed", f"{summary.frames_processed:,}")
+    with metric_c2:
+        st.metric("Unique Tracks", f"{summary.unique_tracks:,}")
+    with metric_c3:
+        st.metric("Avg Active Tracks/Frame", f"{summary.avg_active_tracks_per_frame}")
+    with metric_c4:
+        st.metric(
+            "Longest Track Duration",
+            f"{summary.longest_track_duration_seconds}s",
+            help=f"Continuous tracking over {summary.longest_track_frames} frames",
+        )
+
+    spec_col1, spec_col2 = st.columns(2)
+    with spec_col1:
+        st.markdown(
+            f"""
+            - **Tracker Algorithm:** `{summary.tracker_name.upper()}`
+            - **Confidence Threshold:** `{summary.confidence_threshold:.2f}`
+            """
+        )
+    with spec_col2:
+        st.markdown(
+            f"""
+            - **Track Length Range:** `{summary.min_track_length}` min / `{summary.max_track_length}` max frames
+            - **Tracks CSV:** `{summary.tracks_csv_path}`
+            """
+        )
+
+
+def render_tracking_section(video_path: Path):
+    """Render Feature 4: Student / Person Tracking controls and visualizations."""
+    st.subheader("🧭 Feature 4: Student / Person Tracking")
+    st.markdown(
+        "Connect per-frame person detections across consecutive video frames into persistent, anonymous **Track IDs** "
+        "using multi-object tracking (ByteTrack or BoT-SORT). Track IDs allow the system to trace individual student spatial positions across time."
+    )
+
+    st.info(
+        "🛡️ **Important Ethical Scope Notice:** Track IDs (e.g. `ID: 1`, `ID: 2`) are temporary computational identifiers "
+        "assigned exclusively to maintain spatial continuity across frames. They **do not** represent real student identities, "
+        "names, roll numbers, or personal profiles. Facial recognition is strictly excluded."
+    )
+
+    video_id = derive_video_id(video_path)
+    metadata_csv_path = PROCESSED_DIR / video_id / "frame_metadata.csv"
+    frames_dir = FRAMES_DIR / video_id
+
+    # Verify extracted frames exist
+    if not metadata_csv_path.exists() or not frames_dir.exists():
+        st.info("👉 Please complete **Feature 2 (Frame Extraction)** above to generate frames for person tracking.")
+        return
+
+    try:
+        frames_df = pd.read_csv(metadata_csv_path)
+        if frames_df.empty:
+            st.info("👉 No extracted frames found in metadata. Please run frame extraction first.")
+            return
+    except Exception as exc:
+        st.error(f"Error reading frame metadata: {str(exc)}")
+        return
+
+    track_ctrl_col1, track_ctrl_col2, track_ctrl_col3 = st.columns([1.0, 1.0, 1.2], gap="medium")
+
+    with track_ctrl_col1:
+        st.markdown("##### ⚙️ Tracker Algorithm")
+        tracker_type = st.selectbox(
+            label="Select tracking method:",
+            options=SUPPORTED_TRACKERS,
+            index=0,
+            format_func=lambda x: "ByteTrack (Recommended - High Speed)" if x == "bytetrack" else "BoT-SORT (Camera Motion Compensation)",
+            help="ByteTrack associates both high and low score detection boxes to maintain tracks through occlusion.",
+            key="sb_tracker_type",
+        )
+
+    with track_ctrl_col2:
+        st.markdown("##### 🎯 Confidence Threshold")
+        conf_threshold = st.slider(
+            label="Minimum Tracking Confidence:",
+            min_value=0.10,
+            max_value=1.00,
+            value=DEFAULT_TRACKING_CONF_THRESHOLD,
+            step=0.05,
+            help="Filters out bounding box detections with confidence scores below this threshold before tracking.",
+            key="slider_track_conf",
+        )
+        st.caption(f"Tracking detections with confidence $\\ge {conf_threshold:.2f}$.")
+
+    with track_ctrl_col3:
+        st.markdown("##### 🎞️ Frames to Track")
+        seq_mode_label = st.selectbox(
+            label="Sequence range:",
+            options=[
+                "All extracted frames (Continuous sequence)",
+                "First 15 frames (Quick preview)",
+                "First 30 frames (Extended preview)",
+                "Custom frame count (N frames)",
+            ],
+            index=0,
+            help="Tracking requires consecutive chronological frames for consistent ID continuity.",
+            key="sb_track_seq",
+        )
+
+        custom_track_count = 15
+        if "Custom" in seq_mode_label:
+            custom_track_count = st.number_input(
+                "Number of consecutive frames (N):",
+                min_value=2,
+                max_value=max(len(frames_df), 2),
+                value=min(15, len(frames_df)),
+                step=1,
+                key="num_input_track_count",
+            )
+
+    show_trajectories = st.checkbox(
+        "Draw spatial centroid trajectory paths (Movement history trails)",
+        value=True,
+        help="Renders historical centroid movement lines behind each tracked person across consecutive frames.",
+        key="cb_show_trajectories",
+    )
+
+    # Map sequence label to mode
+    if "First 15" in seq_mode_label:
+        selection_mode = "custom"
+        custom_track_count = 15
+    elif "First 30" in seq_mode_label:
+        selection_mode = "custom"
+        custom_track_count = 30
+    elif "Custom" in seq_mode_label:
+        selection_mode = "custom"
+    else:
+        selection_mode = "all"
+
+    tracking_state_key = f"tracking_{video_id}"
+
+    track_clicked = st.button(
+        "🎯 Track People Across Consecutive Frames",
+        type="primary",
+        use_container_width=True,
+        key="btn_track_persons",
+    )
+
+    if track_clicked:
+        progress_bar = st.progress(0.0)
+        status_text = st.empty()
+
+        def on_track_progress(current: int, total: int, msg: str):
+            fraction = min(max(current / max(total, 1), 0.0), 1.0)
+            progress_bar.progress(fraction)
+            status_text.caption(f"⏳ {msg} ({int(fraction * 100)}%)")
+
+        with st.spinner(f"Running {tracker_type.upper()} multi-object tracking across consecutive frames..."):
+            try:
+                tracker = get_person_tracker(DEFAULT_YOLO_MODEL, tracker_type)
+                success, summary, tracks_df, annotated_frames, msg = run_tracking_on_frames(
+                    video_id=video_id,
+                    frames_df=frames_df,
+                    tracker=tracker,
+                    conf_threshold=conf_threshold,
+                    tracker_type=tracker_type,
+                    frame_selection_mode=selection_mode,
+                    custom_sample_count=int(custom_track_count),
+                    show_trajectories=show_trajectories,
+                    progress_callback=on_track_progress,
+                )
+            except Exception as exc:
+                success = False
+                summary = None
+                tracks_df = None
+                annotated_frames = {}
+                msg = f"Unexpected tracking error: {str(exc)}"
+
+        progress_bar.empty()
+        status_text.empty()
+
+        if success and summary and tracks_df is not None:
+            st.session_state[tracking_state_key] = {
+                "summary": summary,
+                "df": tracks_df,
+                "annotated": annotated_frames,
+            }
+            st.success(f"✅ {msg}")
+        else:
+            st.error(f"❌ Tracking failed: {msg}")
+
+    # Render tracking results if present in session state
+    if tracking_state_key in st.session_state:
+        res = st.session_state[tracking_state_key]
+        summary: TrackingSummary = res["summary"]
+        tracks_df: pd.DataFrame = res["df"]
+        annotated_frames: Dict[int, np.ndarray] = res["annotated"]
+
+        st.markdown("---")
+        render_tracking_summary(summary)
+
+        st.markdown("---")
+        st.subheader("🖼️ Sequential Tracking Visualizer")
+
+        if not annotated_frames:
+            st.warning("⚠️ No tracked people found in the selected frames with the current settings.")
+        else:
+            available_frame_indices = sorted(annotated_frames.keys())
+
+            selected_frame_idx = st.select_slider(
+                "Select frame to inspect tracking continuity:",
+                options=available_frame_indices,
+                value=available_frame_indices[0],
+                format_func=lambda idx: f"Frame #{idx:03d}",
+                key="slider_track_frame",
+            )
+
+            # Tabbed inspection view: Single frame vs Consecutive comparison
+            tab_single, tab_compare, tab_trajectory = st.tabs([
+                "📸 Single Frame View",
+                "🔄 Consecutive Frame Comparison (N-1 vs N)",
+                "📈 Spatial Centroid Trajectory Map",
+            ])
+
+            with tab_single:
+                annotated_img = annotated_frames[selected_frame_idx]
+                curr_tracks = tracks_df[tracks_df["extracted_frame_index"] == selected_frame_idx]
+                active_count = len(curr_tracks)
+
+                st.markdown(
+                    f"**Frame #{selected_frame_idx:03d}** — Active Tracked People: `{active_count}` | "
+                    f"Track IDs present: `{sorted(curr_tracks['track_id'].tolist()) if active_count > 0 else 'None'}`"
+                )
+                st.image(
+                    annotated_img,
+                    caption=f"Frame #{selected_frame_idx:03d} | Active Tracks: {active_count} | Persistent IDs & Centroid Paths",
+                    use_container_width=True,
+                )
+
+                if not curr_tracks.empty:
+                    with st.expander(f"📋 Active Tracks Data in Frame #{selected_frame_idx:03d}", expanded=False):
+                        display_cols = ["track_id", "confidence", "x1", "y1", "x2", "y2", "center_x", "center_y"]
+                        st.dataframe(
+                            curr_tracks[display_cols].sort_values(by="track_id"),
+                            use_container_width=True,
+                            hide_index=True,
+                        )
+
+            with tab_compare:
+                # Find preceding frame in sequence
+                curr_pos = available_frame_indices.index(selected_frame_idx)
+                if curr_pos == 0:
+                    st.info("ℹ️ Currently viewing the first frame. Move the slider to Frame 2 or higher to compare consecutive frames.")
+                    st.image(
+                        annotated_frames[selected_frame_idx],
+                        caption=f"Initial Frame #{selected_frame_idx:03d}",
+                        use_container_width=True,
+                    )
+                else:
+                    prev_frame_idx = available_frame_indices[curr_pos - 1]
+                    prev_tracks = tracks_df[tracks_df["extracted_frame_index"] == prev_frame_idx]
+                    curr_tracks = tracks_df[tracks_df["extracted_frame_index"] == selected_frame_idx]
+
+                    prev_ids = set(prev_tracks["track_id"])
+                    curr_ids = set(curr_tracks["track_id"])
+                    shared_ids = prev_ids.intersection(curr_ids)
+
+                    st.markdown(
+                        f"**Comparing Frame #{prev_frame_idx:03d} (Previous) with Frame #{selected_frame_idx:03d} (Current)** — "
+                        f"Shared Track IDs: `{sorted(shared_ids)}` ({len(shared_ids)} persisting tracks)"
+                    )
+
+                    col_prev, col_curr = st.columns(2, gap="medium")
+                    with col_prev:
+                        st.markdown(f"##### Previous: Frame #{prev_frame_idx:03d}")
+                        st.image(
+                            annotated_frames[prev_frame_idx],
+                            caption=f"Frame #{prev_frame_idx:03d} (Tracks: {len(prev_tracks)})",
+                            use_container_width=True,
+                        )
+                    with col_curr:
+                        st.markdown(f"##### Current: Frame #{selected_frame_idx:03d}")
+                        st.image(
+                            annotated_frames[selected_frame_idx],
+                            caption=f"Frame #{selected_frame_idx:03d} (Tracks: {len(curr_tracks)})",
+                            use_container_width=True,
+                        )
+
+            with tab_trajectory:
+                st.markdown("##### 📍 2D Spatial Centroid Movement Map")
+                st.caption(
+                    "Traces bounding box center points $(center\\_x, center\\_y)$ across processed video frames. "
+                    "*(Note: Represents spatial physical movement in camera view only; not an engagement or cognitive metric)*."
+                )
+
+                if not tracks_df.empty and tracks_df["track_id"].nunique() > 0:
+                    try:
+                        import matplotlib.pyplot as plt
+
+                        fig, ax = plt.subplots(figsize=(10, 5.5), facecolor="#0e1117")
+                        ax.set_facecolor("#161b22")
+
+                        # Group by track_id and plot centroid path
+                        from src.tracking.tracker import get_track_color
+
+                        for t_id, group in tracks_df.groupby("track_id"):
+                            if len(group) > 1:
+                                group_sorted = group.sort_values(by="timestamp_seconds")
+                                xs = group_sorted["center_x"].values
+                                ys = group_sorted["center_y"].values
+                                r, g, b = get_track_color(int(t_id))
+                                hex_col = f"#{r:02x}{g:02x}{b:02x}"
+                                ax.plot(xs, ys, marker="o", markersize=3, linewidth=1.8, color=hex_col, label=f"Track {t_id}")
+                                ax.text(xs[0], ys[0], f"#{t_id}", fontsize=7, color="#ffffff", alpha=0.7)
+
+                        ax.set_title("Track Centroid Trajectories Across Frames", color="#e6edf3", fontsize=12)
+                        ax.set_xlabel("Frame X Coordinate (pixels)", color="#8b949e")
+                        ax.set_ylabel("Frame Y Coordinate (pixels)", color="#8b949e")
+                        ax.invert_yaxis()  # Invert Y so top of image is at top of plot
+                        ax.tick_params(colors="#8b949e")
+                        for spine in ax.spines.values():
+                            spine.set_color("#30363d")
+                        ax.grid(True, linestyle="--", alpha=0.2, color="#8b949e")
+
+                        st.pyplot(fig)
+                        plt.close(fig)
+                    except Exception as plot_err:
+                        st.info(f"Trajectory plotting note: {plot_err}")
+                else:
+                    st.info("No multi-frame track trajectories to display.")
+
+        st.markdown("---")
+        st.subheader("📄 Tracks Dataset (`tracks.csv`)")
+        st.caption("Complete temporal tracking records with bounding box coordinates and centroids.")
+
+        st.dataframe(
+            tracks_df,
+            use_container_width=True,
+            hide_index=True,
+        )
+
+        csv_data = tracks_df.to_csv(index=False).encode("utf-8")
+        st.download_button(
+            label="📥 Download Tracks CSV",
+            data=csv_data,
+            file_name=f"{video_id}_tracks.csv",
+            mime="text/csv",
+            help="Download structured tracking records with persistent Track IDs and centroid coordinates.",
+            key="btn_download_tracks_csv",
+        )
+
+        with st.expander("⚠️ Tracking Limitations & Occlusion Handling in Classrooms", expanded=False):
+            st.markdown(
+                """
+                - **Classroom Density & Occlusion:** When students sit in dense lecture rows or walk past each other, temporary occlusion can occur.
+                - **ID Switches:** If a student is completely hidden by another person or a laptop screen for several frames, the tracker may re-detect them under a new Track ID upon reappearance.
+                - **Re-identification:** ByteTrack maintains tracks by associating low-confidence boxes in ambiguous situations, significantly reducing false track terminations.
+                - **Academic Integrity:** Track IDs describe tracking performance and visual continuity — they never imply student identities, attendance records, or mental states.
+                """
+            )
+
+
 def main():
     """Main application loop."""
     render_sidebar()
@@ -684,6 +1066,13 @@ def main():
     if saved_path and saved_path.exists():
         render_detection_section(saved_path)
 
+    st.markdown("---")
+
+    # Feature 4: Student / Person Tracking Section
+    if saved_path and saved_path.exists():
+        render_tracking_section(saved_path)
+
 
 if __name__ == "__main__":
     main()
+

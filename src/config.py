@@ -30,6 +30,13 @@ DEFAULT_YOLO_MODEL = "yolov8n.pt"
 PERSON_CLASS_ID = 0
 PERSON_CLASS_NAME = "person"
 
+# Feature 4 Configuration: Student / Person Tracking
+DEFAULT_TRACKER = "bytetrack"
+SUPPORTED_TRACKERS = ["bytetrack", "botsort"]
+DEFAULT_TRACKING_CONF_THRESHOLD = 0.25
+DEFAULT_TRAJECTORY_MAX_POINTS = 30
+TRACKS_CSV_FILENAME = "tracks.csv"
+
 # Project Metadata
 PROJECT_TITLE = "Temporal Learning-Engagement Profiling from Classroom Videos"
 PROJECT_SHORT_TITLE = "EduPulse AI"

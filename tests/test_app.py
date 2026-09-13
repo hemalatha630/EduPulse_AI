@@ -112,6 +112,33 @@ def test_app_detection_workflow(video_bytes):
     assert any("Detections Dataset" in s for s in subheaders_after)
 
 
+def test_app_tracking_workflow(video_bytes):
+    """Verify Feature 4 person tracking UI workflow end-to-end."""
+    at = AppTest.from_file(APP_FILE, default_timeout=30).run()
+    at.file_uploader[0].upload(filename="sample_classroom.mp4", content=video_bytes).run()
+    assert not at.exception
+
+    # Extract frames first so tracking section has frames
+    extract_button = next(b for b in at.button if "Extract Frames" in b.label)
+    extract_button.click().run()
+    assert not at.exception
+
+    # Verify Feature 4 subheader
+    subheaders = [s.value for s in at.subheader]
+    assert any("Feature 4: Student / Person Tracking" in s for s in subheaders)
+
+    # Trigger tracking
+    track_btn = next(b for b in at.button if "Track People Across Consecutive Frames" in b.label)
+    track_btn.click().run()
+    assert not at.exception
+
+    # Verify tracking summary rendered
+    subheaders_after = [s.value for s in at.subheader]
+    assert any("Tracking Summary" in s for s in subheaders_after)
+    assert any("Sequential Tracking Visualizer" in s for s in subheaders_after)
+    assert any("Tracks Dataset" in s for s in subheaders_after)
+
+
 def test_app_empty_file_upload():
     """Verify application handles empty file gracefully."""
     at = AppTest.from_file(APP_FILE).run()
