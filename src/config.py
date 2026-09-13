@@ -54,6 +54,14 @@ CLASS_MOBILE_DEVICE_ACTIVITY = "Mobile-device activity"
 CLASS_HEAD_DOWN = "Head-down behaviour"
 CLASS_UNKNOWN = UNKNOWN_BEHAVIOUR
 
+# Feature 6 Configuration: CNN Visual Feature Extraction
+DEFAULT_CNN_MODEL = "resnet18"
+SUPPORTED_CNN_MODELS = ["resnet18"]
+CNN_FEATURE_DIM = 512
+CNN_FEATURES_NPY_FILENAME = "cnn_features.npy"
+CNN_METADATA_CSV_FILENAME = "cnn_features_metadata.csv"
+DEFAULT_CNN_BATCH_SIZE = 16
+
 # Project Metadata
 PROJECT_TITLE = "Temporal Learning-Engagement Profiling from Classroom Videos"
 PROJECT_SHORT_TITLE = "EduPulse AI"

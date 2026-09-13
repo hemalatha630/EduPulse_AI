@@ -167,6 +167,39 @@ def test_app_behaviour_recognition_workflow():
     assert any("Behaviours Dataset" in s for s in subheaders_after)
 
 
+def test_app_cnn_feature_extraction_workflow():
+    """Verify Feature 6 CNN visual feature extraction UI workflow end-to-end."""
+    candidates = [
+        ROOT_DIR / "scratch" / "sample_media" / "classroom_lecture_demo.mp4",
+        ROOT_DIR / "data" / "videos" / "classroom_lecture_demo.mp4",
+    ]
+    demo_video = next((p for p in candidates if p.exists()), None)
+    if not demo_video:
+        pytest.skip("classroom_lecture_demo.mp4 required for full CNN UI test")
+
+    video_bytes = demo_video.read_bytes()
+    at = AppTest.from_file(APP_FILE, default_timeout=90).run()
+    at.file_uploader[0].upload(filename="classroom_lecture_demo.mp4", content=video_bytes).run()
+    assert not at.exception
+
+    # Verify Feature 6 header is present
+    headers = [h.value for h in at.header]
+    assert any("Feature 6: CNN Visual Feature Extraction" in h for h in headers)
+
+    # Trigger CNN extraction
+    cnn_btn = next((b for b in at.button if "Extract CNN Visual Features" in b.label), None)
+    assert cnn_btn is not None
+    cnn_btn.click().run()
+    assert not at.exception
+
+    # Verify summary cards and dataset table
+    subheaders_after = [s.value for s in at.subheader]
+    assert any("CNN Feature Extraction Summary" in s for s in subheaders_after)
+    assert any("Visual Feature Inspection" in s for s in subheaders_after)
+    assert any("2D PCA Feature Space Distribution" in s for s in subheaders_after)
+    assert any("CNN Features Metadata" in s for s in subheaders_after)
+
+
 def test_app_empty_file_upload():
     """Verify application handles empty file gracefully."""
     at = AppTest.from_file(APP_FILE, default_timeout=60).run()
