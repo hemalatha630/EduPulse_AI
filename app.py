@@ -50,7 +50,10 @@ from src.config import (
     DEFAULT_CNN_BATCH_SIZE,
     DEFAULT_CNN_MODEL,
     DEFAULT_CONFIDENCE_THRESHOLD,
+    DEFAULT_MAX_FRAME_GAP,
     DEFAULT_SAMPLING_INTERVAL,
+    DEFAULT_SEQUENCE_LENGTH,
+    DEFAULT_SEQUENCE_STRIDE,
     DEFAULT_TRACKER,
     DEFAULT_TRACKING_CONF_THRESHOLD,
     DEFAULT_YOLO_MODEL,
@@ -62,10 +65,21 @@ from src.config import (
     SUPPORTED_EXTENSIONS,
     SUPPORTED_TRACKERS,
     TARGET_OBSERVABLE_BEHAVIOURS,
+    TEMPORAL_SEQUENCES_METADATA_FILENAME,
+    TEMPORAL_SEQUENCES_NPY_FILENAME,
     TRACKS_CSV_FILENAME,
     UNKNOWN_BEHAVIOUR,
     VIDEOS_DIR,
     ensure_directories,
+)
+from src.temporal import (
+    ClassroomSequenceDataset,
+    SequenceSummary,
+    TemporalSequenceGenerator,
+    create_sequence_timeline_figure,
+    create_track_coverage_figure,
+    run_temporal_sequence_creation,
+    sequences_to_tensor,
 )
 from src.detection.detector import (
     DetectionResult,
@@ -97,7 +111,7 @@ from src.video.video_utils import (
 
 # Page configuration
 st.set_page_config(
-    page_title="EduPulse AI | Classroom Video Input, Frames, Detection, Tracking & Behaviour",
+    page_title="EduPulse AI | Classroom Video Input, Frames, Tracking, Behaviour & Temporal Sequences",
     page_icon="🎓",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -170,8 +184,9 @@ def render_sidebar():
         st.success("✅ **Feature 3: Student / Person Detection**")
         st.success("✅ **Feature 4: Student / Person Tracking**")
         st.success("✅ **Feature 5: Observable Behaviour Recognition**")
-        st.success("🚀 **Feature 6: CNN Visual Feature Extraction**")
-        st.caption("Next stages (Feature 7: Temporal Sequence Modelling RNN/LSTM) unlock in future milestones.")
+        st.success("✅ **Feature 6: CNN Visual Feature Extraction**")
+        st.success("🚀 **Feature 7: Temporal Sequence Creation**")
+        st.caption("Next stages (Feature 8: Temporal Sequence Modelling RNN/LSTM) unlock in future milestones.")
 
 
 def render_header():
@@ -1791,6 +1806,275 @@ def render_cnn_feature_extraction_section(saved_path: Path):
             )
 
 
+def render_temporal_sequence_section(saved_path: Path):
+    """Render Feature 7 Temporal Sequence Creation section."""
+    st.subheader("⏱️ Feature 7: Temporal Sequence Creation")
+    st.caption(
+        "Organizes extracted CNN visual feature embeddings chronologically into fixed-length sliding-window "
+        "sequences for each tracked student. Prepares PyTorch-ready 3D tensors (N, L, D) for downstream sequence modeling."
+    )
+
+    with st.expander("ℹ️ About Temporal Sequence Creation & Academic Scope", expanded=False):
+        st.markdown(
+            """
+            - **Track-Wise Isolation:** Features are partitioned strictly by Track ID so observations from different students are never mixed.
+            - **Chronological Ordering:** Observations within each track are strictly sorted by extracted frame index and video timestamp.
+            - **Sliding-Window Chunking:** Continuous track segments are partitioned into overlapping fixed-length windows of length $L$ and stride $S$.
+            - **Gap Splitting:** If the tracking gap between consecutive observations exceeds tolerance ($G$ frames), the segment is safely split to prevent unobserved jumps.
+            - **Downstream Compatibility:** Decoupled into a 3D NumPy array `temporal_sequences.npy` of shape `(N, L, D)` and a spatial-temporal metadata ledger `temporal_sequences_metadata.csv`, with direct PyTorch `Dataset` and `DataLoader` compatibility.
+            - **Strict Research Boundaries:** Sequence creation organizes observable visual features across time. It does **not** perform RNN/LSTM training or inference (Feature 8), nor does it claim or infer internal mental states.
+            """
+        )
+
+    video_id = derive_video_id(saved_path)
+    processed_dir = PROCESSED_DIR / video_id
+
+    cnn_npy_path = processed_dir / CNN_FEATURES_NPY_FILENAME
+    cnn_meta_path = processed_dir / CNN_METADATA_CSV_FILENAME
+    seq_npy_path = processed_dir / TEMPORAL_SEQUENCES_NPY_FILENAME
+    seq_meta_path = processed_dir / TEMPORAL_SEQUENCES_METADATA_FILENAME
+
+    # Verify Feature 6 prerequisites
+    if not cnn_npy_path.exists() or not cnn_meta_path.exists():
+        st.warning(
+            "⚠️ **Feature 6 (CNN Visual Feature Extraction) is required before temporal sequences can be created.** "
+            "Please run Feature 6 above to generate visual feature embeddings."
+        )
+        return
+
+    # Configuration controls
+    st.markdown("##### ⚙️ Sequence Generation Parameters")
+    param_col1, param_col2, param_col3 = st.columns(3)
+
+    with param_col1:
+        seq_length = st.slider(
+            "Sequence Length (Frames / Time Steps $L$)",
+            min_value=3,
+            max_value=30,
+            value=DEFAULT_SEQUENCE_LENGTH,
+            step=1,
+            help="Number of consecutive observations in each temporal sequence window.",
+            key="temporal_seq_length_slider",
+        )
+
+    with param_col2:
+        seq_stride = st.slider(
+            "Window Stride ($S$)",
+            min_value=1,
+            max_value=10,
+            value=DEFAULT_SEQUENCE_STRIDE,
+            step=1,
+            help="Step size between consecutive sliding windows. Stride < Length produces overlapping sequences.",
+            key="temporal_stride_slider",
+        )
+
+    with param_col3:
+        max_gap = st.slider(
+            "Max Frame Gap Tolerance ($G$)",
+            min_value=1,
+            max_value=10,
+            value=DEFAULT_MAX_FRAME_GAP,
+            step=1,
+            help="Maximum allowable missing frame count before a track is split into separate continuous segments.",
+            key="temporal_max_gap_slider",
+        )
+
+    # Action button
+    if st.button("🚀 Create Temporal Sequences", type="primary", use_container_width=True, key="btn_run_temporal_sequences"):
+        progress_bar = st.progress(0.0)
+        status_text = st.empty()
+
+        def update_progress(prog: float, text: str):
+            progress_bar.progress(prog)
+            status_text.text(text)
+
+        with st.spinner("Generating temporal sliding-window sequences across student tracks..."):
+            success, summary, metadata_df, sequences_array, err_msg = run_temporal_sequence_creation(
+                video_id=video_id,
+                cnn_features_path=cnn_npy_path,
+                cnn_metadata_path=cnn_meta_path,
+                sequence_length=int(seq_length),
+                stride=int(seq_stride),
+                max_frame_gap=int(max_gap),
+                progress_callback=update_progress,
+            )
+
+        if success and summary:
+            st.success(
+                f"✅ **Temporal Sequence Creation Complete:** Created {summary.total_sequences_created} sequences "
+                f"with tensor shape {summary.tensor_shape} across {summary.valid_tracks_processed} valid student tracks "
+                f"in {summary.processing_time_seconds:.2f}s."
+            )
+            st.session_state[f"{video_id}_temporal_summary"] = summary
+        else:
+            st.error(f"❌ **Sequence Creation Failed:** {err_msg}")
+
+    # Display Existing / Generated Temporal Sequences
+    if seq_npy_path.exists() and seq_meta_path.exists():
+        try:
+            seq_array = np.load(str(seq_npy_path))
+            seq_meta_df = pd.read_csv(seq_meta_path)
+        except Exception as exc:
+            st.error(f"❌ Error loading temporal sequence files from disk: {exc}")
+            return
+
+        st.markdown("---")
+        st.subheader("📊 Temporal Sequence Summary")
+
+        s1, s2, s3, s4 = st.columns(4)
+        with s1:
+            st.metric("Total Sequences Created", f"{len(seq_array):,}")
+        with s2:
+            st.metric("Tracks Covered", f"{seq_meta_df['track_id'].nunique():,}")
+        with s3:
+            st.metric("PyTorch Tensor Shape", f"{seq_array.shape}")
+        with s4:
+            avg_dur = float(seq_meta_df["duration_seconds"].mean()) if "duration_seconds" in seq_meta_df else 0.0
+            st.metric("Avg Duration", f"{avg_dur:.2f}s")
+
+        # Config specs
+        st.markdown("##### Configuration & Dataset Properties")
+        spec_c1, spec_c2 = st.columns(2)
+        with spec_c1:
+            st.markdown(
+                f"""
+                - **Sequence Length ($L$):** `{seq_array.shape[1] if seq_array.ndim == 3 else seq_length} frames`
+                - **Window Stride ($S$):** `{seq_stride}`
+                - **Feature Dimension ($D$):** `{seq_array.shape[2] if seq_array.ndim == 3 else 512}`
+                """
+            )
+        with spec_c2:
+            st.markdown(
+                f"""
+                - **Sequences Array:** `{seq_npy_path.name}` (`{seq_array.nbytes / (1024 * 1024):.2f} MB`)
+                - **Sequences Metadata:** `{seq_meta_path.name}` (`{len(seq_meta_df)} rows`)
+                - **PyTorch DataType:** `torch.float32`
+                """
+            )
+
+        st.markdown("---")
+
+        # Interactive Sequence Inspector
+        st.subheader("🔍 Interactive Sequence Inspector")
+        st.caption("Select a generated temporal sequence to inspect its temporal window, frame indices, and feature norm progression.")
+
+        avail_seq_ids = sorted(seq_meta_df["sequence_id"].tolist())
+        if avail_seq_ids:
+            sel_seq_id = st.selectbox(
+                "Select Sequence ID to Inspect",
+                avail_seq_ids,
+                index=0,
+                format_func=lambda sid: f"Sequence #{sid} (Track ID {seq_meta_df.loc[seq_meta_df['sequence_id'] == sid, 'track_id'].iloc[0]} | Dominant: {seq_meta_df.loc[seq_meta_df['sequence_id'] == sid, 'dominant_behaviour'].iloc[0]})",
+                key="temporal_inspect_seq_id",
+            )
+
+            seq_row = seq_meta_df[seq_meta_df["sequence_id"] == sel_seq_id].iloc[0]
+            seq_feature_slice = seq_array[sel_seq_id]
+
+            info_col, plot_col = st.columns([1.0, 1.3], gap="medium")
+            with info_col:
+                st.markdown("##### Sequence Properties")
+                st.markdown(f"- **Track ID:** `{int(seq_row['track_id'])}`")
+                st.markdown(f"- **Extracted Frame Range:** `Frame {int(seq_row['start_extracted_frame_index'])} → Frame {int(seq_row['end_extracted_frame_index'])}`")
+                st.markdown(f"- **Video Time Range:** `{float(seq_row['start_timestamp_seconds']):.2f}s → {float(seq_row['end_timestamp_seconds']):.2f}s` (`{float(seq_row['duration_seconds']):.2f}s`)")
+                st.markdown(f"- **Dominant Behaviour:** `{seq_row['dominant_behaviour']}`")
+                st.markdown(f"- **Mean Behaviour Confidence:** `{float(seq_row['mean_behaviour_confidence']):.2%}`")
+                st.markdown(f"- **Transition Chain:** `{seq_row['behaviour_sequence']}`")
+
+                with st.expander("Frame-by-Frame Breakdown", expanded=False):
+                    try:
+                        import json
+                        f_indices = json.loads(seq_row["frame_indices"]) if isinstance(seq_row["frame_indices"], str) else seq_row["frame_indices"]
+                        f_timestamps = json.loads(seq_row["frame_timestamps"]) if isinstance(seq_row["frame_timestamps"], str) else seq_row["frame_timestamps"]
+                        breakdown_df = pd.DataFrame({
+                            "Step": [f"t{i+1}" for i in range(len(f_indices))],
+                            "Extracted Frame": f_indices,
+                            "Timestamp (s)": f_timestamps,
+                        })
+                        st.dataframe(breakdown_df, use_container_width=True, hide_index=True)
+                    except Exception as e:
+                        st.caption(f"Details: {e}")
+
+            with plot_col:
+                fig = create_sequence_timeline_figure(seq_feature_slice, seq_row.to_dict())
+                st.pyplot(fig)
+
+        st.markdown("---")
+
+        # Track Coverage Timeline Chart
+        st.subheader("📈 Track Temporal Window Coverage")
+        st.caption("Illustrates the time windows covered by temporal sequences across each tracked student.")
+        cov_fig = create_track_coverage_figure(seq_meta_df)
+        if cov_fig is not None:
+            st.pyplot(cov_fig)
+
+        st.markdown("---")
+
+        # PyTorch Dataset Compatibility Demonstration
+        st.subheader("🔌 PyTorch DataLoader & Model Integration (Ready for Feature 8)")
+        st.caption("How downstream models in Feature 8 can directly load these temporal sequences using standard PyTorch utilities:")
+        st.code(
+            f"""from torch.utils.data import DataLoader
+from src.temporal import ClassroomSequenceDataset
+import numpy as np
+import pandas as pd
+
+# 1. Load generated sequence array and metadata
+sequences = np.load("{seq_npy_path}")  # Shape: {seq_array.shape}
+metadata_df = pd.read_csv("{seq_meta_path}")
+
+# 2. Instantiate PyTorch Dataset adapter
+dataset = ClassroomSequenceDataset(sequences=sequences, metadata_df=metadata_df)
+
+# 3. Create standard PyTorch DataLoader with batching & shuffling
+dataloader = DataLoader(dataset, batch_size=8, shuffle=True)
+
+# 4. In Feature 8: Iterate batches (batch_shape: [8, {seq_array.shape[1]}, {seq_array.shape[2]}])
+for batch_tensors, batch_metadata in dataloader:
+    # Model forward pass: outputs = model(batch_tensors)
+    pass
+""",
+            language="python",
+        )
+
+        st.markdown("---")
+
+        # Dataset Preview & Downloads
+        st.subheader("📄 Temporal Sequences Metadata (`temporal_sequences_metadata.csv`)")
+        st.caption(
+            "Complete tabular metadata mapping each sequence index to its Track ID, frame window, "
+            "timestamp range, dominant observable behaviour, and frame indices."
+        )
+
+        st.dataframe(seq_meta_df, use_container_width=True, hide_index=True)
+
+        down_col1, down_col2 = st.columns(2)
+        with down_col1:
+            csv_bytes = seq_meta_df.to_csv(index=False).encode("utf-8")
+            st.download_button(
+                label="📥 Download Sequences Metadata CSV",
+                data=csv_bytes,
+                file_name=f"{video_id}_{TEMPORAL_SEQUENCES_METADATA_FILENAME}",
+                mime="text/csv",
+                help="Download tabular mapping linking temporal sequence indices to tracks, frame windows, and behaviours.",
+                key="btn_download_temporal_metadata_csv",
+            )
+
+        with down_col2:
+            import io
+            npy_buffer = io.BytesIO()
+            np.save(npy_buffer, seq_array)
+            npy_bytes = npy_buffer.getvalue()
+            st.download_button(
+                label="📥 Download Sequences Array (.npy)",
+                data=npy_bytes,
+                file_name=f"{video_id}_{TEMPORAL_SEQUENCES_NPY_FILENAME}",
+                mime="application/octet-stream",
+                help="Download raw float32 NumPy 3D tensor of shape (N, L, D).",
+                key="btn_download_temporal_sequences_npy",
+            )
+
+
 def main():
     """Main application loop."""
     render_sidebar()
@@ -1879,6 +2163,12 @@ def main():
     # Feature 6: CNN Visual Feature Extraction Section
     if saved_path and saved_path.exists():
         render_cnn_feature_extraction_section(saved_path)
+
+    st.markdown("---")
+
+    # Feature 7: Temporal Sequence Creation Section
+    if saved_path and saved_path.exists():
+        render_temporal_sequence_section(saved_path)
 
 
 if __name__ == "__main__":
