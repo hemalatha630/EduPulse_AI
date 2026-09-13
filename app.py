@@ -14,10 +14,29 @@ ROOT_DIR = Path(__file__).resolve().parent
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
+import cv2
 import pandas as pd
 import streamlit as st
 
+from src.behaviour.behaviour_classifier import (
+    BehaviourClassifier,
+    BehaviourPrediction,
+    BehaviourSummary,
+    run_behaviour_recognition_on_tracks,
+)
+from src.behaviour.behaviour_labels import (
+    ALL_BEHAVIOUR_CLASSES,
+    BEHAVIOUR_DESCRIPTIONS,
+    CLASS_UNKNOWN,
+    TARGET_BEHAVIOUR_CLASSES,
+    get_behaviour_description,
+    get_behaviour_hex,
+    get_behaviour_rgb,
+)
 from src.config import (
+    BEHAVIOUR_COLORS,
+    BEHAVIOURS_CSV_FILENAME,
+    DEFAULT_BEHAVIOUR_CONF_THRESHOLD,
     DEFAULT_CONFIDENCE_THRESHOLD,
     DEFAULT_SAMPLING_INTERVAL,
     DEFAULT_TRACKER,
@@ -31,6 +50,7 @@ from src.config import (
     SUPPORTED_TRACKERS,
     TARGET_OBSERVABLE_BEHAVIOURS,
     TRACKS_CSV_FILENAME,
+    UNKNOWN_BEHAVIOUR,
     VIDEOS_DIR,
     ensure_directories,
 )
@@ -45,6 +65,7 @@ from src.tracking.tracker import (
     PersonTracker,
     TrackResult,
     TrackingSummary,
+    get_track_color,
     run_tracking_on_frames,
 )
 from src.video.frame_extractor import (
@@ -63,7 +84,7 @@ from src.video.video_utils import (
 
 # Page configuration
 st.set_page_config(
-    page_title="EduPulse AI | Classroom Video Input, Frames, Detection & Tracking",
+    page_title="EduPulse AI | Classroom Video Input, Frames, Detection, Tracking & Behaviour",
     page_icon="🎓",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -89,6 +110,13 @@ def get_person_tracker(
     tracker = PersonTracker(model_name=model_name, tracker_type=tracker_type)
     tracker.load_model()
     return tracker
+
+
+@st.cache_resource
+def get_behaviour_classifier() -> BehaviourClassifier:
+    """Cache and return the loaded BehaviourClassifier instance."""
+    classifier = BehaviourClassifier()
+    return classifier
 
 
 def render_sidebar():
@@ -120,8 +148,9 @@ def render_sidebar():
         st.success("✅ **Feature 1: Video Ingestion & Metadata**")
         st.success("✅ **Feature 2: Frame Extraction & Preprocessing**")
         st.success("✅ **Feature 3: Student / Person Detection**")
-        st.success("🚀 **Feature 4: Student / Person Tracking**")
-        st.caption("Next stages (Behaviour Classification, CNN/RNN Modeling) unlock in future milestones.")
+        st.success("✅ **Feature 4: Student / Person Tracking**")
+        st.success("🚀 **Feature 5: Observable Behaviour Recognition**")
+        st.caption("Next stages (Temporal CNN/RNN Sequence Modelling) unlock in future milestones.")
 
 
 def render_header():
@@ -995,6 +1024,371 @@ def render_tracking_section(video_path: Path):
             )
 
 
+def render_behaviour_recognition_section(video_path: Path):
+    """Render Section 5: Observable Behaviour Recognition."""
+    st.subheader("🎯 Feature 5: Observable Behaviour Recognition")
+    st.info(
+        "🛡️ **Strict Research Scope Notice:** This module identifies **strictly observable learning-related behaviours** "
+        "from tracked person crops (posture, head orientation, reading/writing actions, peer proximity). "
+        "It **does NOT** infer internal cognitive or emotional states (e.g. boredom, motivation, intelligence, attention, or comprehension)."
+    )
+
+    video_id = derive_video_id(video_path)
+    metadata_csv_path = PROCESSED_DIR / video_id / "frame_metadata.csv"
+    tracks_csv_path = PROCESSED_DIR / video_id / TRACKS_CSV_FILENAME
+    frames_dir = FRAMES_DIR / video_id
+
+    # Verify prerequisites: frames and tracks
+    if not metadata_csv_path.exists() or not frames_dir.exists():
+        st.info("👉 Please complete **Feature 2 (Frame Extraction)** above to extract video frames.")
+        return
+
+    if not tracks_csv_path.exists():
+        st.info("👉 Please complete **Feature 4 (Student Tracking)** above to generate tracked person bounding boxes across consecutive frames.")
+        return
+
+    try:
+        frames_df = pd.read_csv(metadata_csv_path)
+        tracks_df = pd.read_csv(tracks_csv_path)
+        if frames_df.empty:
+            st.info("👉 No extracted frames found in metadata.")
+            return
+        if tracks_df.empty:
+            st.info("👉 No tracking records found in tracks.csv.")
+            return
+    except Exception as exc:
+        st.error(f"Error reading metadata or tracking data: {str(exc)}")
+        return
+
+    classifier = get_behaviour_classifier()
+
+    st.success(f"🔬 **Classifier Mode:** {classifier.mode_name}")
+    st.caption(
+        "ℹ️ **Research Integrity Notice:** No proprietary labelled classroom behaviour dataset is currently loaded. "
+        "The system operates in a transparent **Prototype / Baseline Heuristic** mode using observable visual cues "
+        "(head orientation, aspect ratio, desk/hand region gradients, and proximal peer orientation). "
+        "The architecture is fully modular, allowing trained PyTorch weights to be loaded seamlessly once a labelled dataset is acquired."
+    )
+
+    beh_ctrl_col1, beh_ctrl_col2 = st.columns([1.0, 1.2], gap="medium")
+
+    with beh_ctrl_col1:
+        st.markdown("##### 🎯 Classification Confidence Threshold")
+        beh_conf_threshold = st.slider(
+            label="Minimum Confidence Threshold:",
+            min_value=0.10,
+            max_value=1.00,
+            value=DEFAULT_BEHAVIOUR_CONF_THRESHOLD,
+            step=0.05,
+            help="Predictions with confidence below this threshold are marked as 'Unknown / Uncertain' to preserve scientific rigor.",
+            key="slider_beh_conf",
+        )
+        st.caption(f"Crops with classifier confidence $< {beh_conf_threshold:.2f}$ will be classified as *Unknown / Uncertain*.")
+
+    with beh_ctrl_col2:
+        st.markdown("##### 🎞️ Frames to Classify")
+        beh_seq_label = st.selectbox(
+            label="Frame range for behaviour recognition:",
+            options=[
+                "All extracted frames (Complete sequence)",
+                "First 10 frames (Quick preview)",
+                "First 18 frames (Standard sample)",
+                "Custom frame count",
+            ],
+            index=0,
+            help="Classify observable behaviours for tracked people across selected chronological frames.",
+            key="sb_beh_seq",
+        )
+
+        custom_beh_count = 10
+        if "Custom" in beh_seq_label:
+            custom_beh_count = st.number_input(
+                "Number of frames to process:",
+                min_value=1,
+                max_value=len(frames_df),
+                value=min(10, len(frames_df)),
+                step=1,
+                key="num_input_beh_count",
+            )
+
+    # Determine frame selection mode
+    if "All" in beh_seq_label:
+        sel_mode = "all"
+        first_n_val = len(frames_df)
+    elif "First 10" in beh_seq_label:
+        sel_mode = "first_n"
+        first_n_val = 10
+    elif "First 18" in beh_seq_label:
+        sel_mode = "first_n"
+        first_n_val = 18
+    else:
+        sel_mode = "first_n"
+        first_n_val = int(custom_beh_count)
+
+    run_beh_btn = st.button(
+        "🎯 Recognise Observable Behaviours Across Tracks",
+        type="primary",
+        help="Crop each tracked person, evaluate observable visual cues, and assign one of the 6 defined behaviour categories.",
+        key="btn_run_behaviour_recognition",
+    )
+
+    session_summary_key = f"beh_summary_{video_id}"
+    session_df_key = f"beh_df_{video_id}"
+    session_frames_key = f"beh_frames_{video_id}"
+
+    if run_beh_btn:
+        progress_bar = st.progress(0.0)
+        status_text = st.empty()
+
+        def update_progress(pct: float, msg: str):
+            progress_bar.progress(min(1.0, max(0.0, pct)))
+            status_text.text(msg)
+
+        with st.spinner("Processing tracked person crops and classifying observable behaviours..."):
+            success, summary, b_df, annotated_dict, msg = run_behaviour_recognition_on_tracks(
+                video_id=video_id,
+                frames_df=frames_df,
+                tracks_df=tracks_df,
+                classifier=classifier,
+                conf_threshold=beh_conf_threshold,
+                frame_selection_mode=sel_mode,
+                first_n=first_n_val,
+                progress_callback=update_progress,
+            )
+
+        progress_bar.empty()
+        status_text.empty()
+
+        if success and summary and b_df is not None:
+            st.session_state[session_summary_key] = summary
+            st.session_state[session_df_key] = b_df
+            st.session_state[session_frames_key] = annotated_dict
+            st.success(f"✅ {msg}")
+        else:
+            st.error(f"❌ Behaviour recognition failed: {msg}")
+
+    # Check for existing results in session_state or saved CSV
+    summary = st.session_state.get(session_summary_key)
+    beh_df = st.session_state.get(session_df_key)
+    annotated_dict = st.session_state.get(session_frames_key, {})
+
+    behaviours_csv_path = PROCESSED_DIR / video_id / BEHAVIOURS_CSV_FILENAME
+    if beh_df is None and behaviours_csv_path.exists():
+        try:
+            beh_df = pd.read_csv(behaviours_csv_path)
+            st.session_state[session_df_key] = beh_df
+        except Exception:
+            pass
+
+    if beh_df is not None and not beh_df.empty:
+        st.markdown("---")
+        st.subheader("📋 Behaviour Recognition Summary")
+
+        # Metric cards
+        total_obs = len(beh_df)
+        known_df = beh_df[beh_df["behaviour_class"] != CLASS_UNKNOWN]
+        dominant_beh = known_df["behaviour_class"].mode()[0] if len(known_df) > 0 else "N/A"
+        unique_tracks_cov = beh_df["track_id"].nunique()
+        unknown_count = len(beh_df[beh_df["behaviour_class"] == CLASS_UNKNOWN])
+
+        b_c1, b_c2, b_c3, b_c4 = st.columns(4)
+        with b_c1:
+            st.metric("Total Observations", f"{total_obs:,}")
+            st.caption("Frame-level person classifications")
+        with b_c2:
+            st.metric("Most Frequent Behaviour", dominant_beh)
+            st.caption("Dominant observable category")
+        with b_c3:
+            st.metric("Unique Tracks Covered", f"{unique_tracks_cov}")
+            st.caption("Persistent student tracks")
+        with b_c4:
+            st.metric("Unknown / Uncertain", f"{unknown_count}")
+            st.caption(f"Below {beh_conf_threshold:.2f} conf or occluded")
+
+        st.markdown("---")
+
+        # Visualizations row: Distribution & Details
+        chart_col, exp_col = st.columns([1.2, 1.0], gap="large")
+
+        with chart_col:
+            st.markdown("##### 📊 Observable Behaviour Distribution")
+            st.caption("Distribution of observable behaviours across all frame-level person observations.")
+
+            class_counts = beh_df["behaviour_class"].value_counts()
+            chart_df = pd.DataFrame({
+                "Behaviour Category": class_counts.index,
+                "Observations": class_counts.values,
+            })
+
+            # Horizontal bar chart using matplotlib for exact class colors
+            try:
+                import matplotlib.pyplot as plt
+                fig, ax = plt.subplots(figsize=(8, 4.5))
+                fig.patch.set_facecolor("#0e1117")
+                ax.set_facecolor("#0e1117")
+
+                categories = list(reversed(chart_df["Behaviour Category"].tolist()))
+                counts = list(reversed(chart_df["Observations"].tolist()))
+                bar_colors = [get_behaviour_hex(c) for c in categories]
+
+                bars = ax.barh(categories, counts, color=bar_colors, edgecolor="#30363d", height=0.6)
+                for bar in bars:
+                    w = bar.get_width()
+                    ax.text(w + 0.5, bar.get_y() + bar.get_height() / 2, f"{int(w)}",
+                            ha="left", va="center", color="#e6edf3", fontsize=9, fontweight="bold")
+
+                ax.set_xlabel("Observation Count (Frame-level)", color="#8b949e", fontsize=10)
+                ax.tick_params(colors="#e6edf3", labelsize=9)
+                for spine in ax.spines.values():
+                    spine.set_color("#30363d")
+                ax.grid(axis="x", linestyle="--", alpha=0.2, color="#8b949e")
+
+                st.pyplot(fig)
+                plt.close(fig)
+            except Exception:
+                st.bar_chart(chart_df.set_index("Behaviour Category"))
+
+        with exp_col:
+            st.markdown("##### 🔬 Observable Evidence & Boundaries")
+            for b_name in TARGET_BEHAVIOUR_CLASSES:
+                b_desc = get_behaviour_description(b_name)
+                with st.expander(f"📌 {b_name}", expanded=False):
+                    st.markdown(f"**Visual Evidence:** {b_desc['observable_evidence']}")
+                    st.caption(f"⚠️ *Boundary:* {b_desc['scientific_boundary']}")
+
+        st.markdown("---")
+
+        # Visual Frame Inspector
+        st.subheader("🖼️ Visual Frame Behaviour Inspector")
+        st.caption("Inspect individual classroom frames with colour-coded bounding boxes and behaviour classification badges.")
+
+        # Get sorted list of extracted frames present in beh_df
+        unique_frame_files = sorted(beh_df["frame_filename"].unique())
+        if unique_frame_files:
+            selected_frame_filename = st.select_slider(
+                label="Select Frame to Inspect:",
+                options=unique_frame_files,
+                value=unique_frame_files[0],
+                help="Slide to inspect student observable behaviours frame-by-frame.",
+                key="slider_beh_frame_inspect",
+            )
+
+            # Get frame predictions
+            curr_frame_preds = beh_df[beh_df["frame_filename"] == selected_frame_filename]
+            extracted_idx = int(curr_frame_preds["extracted_frame_index"].iloc[0]) if not curr_frame_preds.empty else 1
+            timestamp_val = float(curr_frame_preds["timestamp_seconds"].iloc[0]) if not curr_frame_preds.empty else 0.0
+
+            # Render frame image
+            frame_img = annotated_dict.get(selected_frame_filename)
+            if frame_img is None:
+                # Load from disk and annotate on the fly
+                f_path = frames_dir / selected_frame_filename
+                if f_path.exists():
+                    bgr = cv2.imread(str(f_path))
+                    if bgr is not None:
+                        rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+                        preds_list = [
+                            BehaviourPrediction(
+                                video_id=r["video_id"],
+                                frame_id=r["frame_id"],
+                                extracted_frame_index=r["extracted_frame_index"],
+                                timestamp_seconds=r["timestamp_seconds"],
+                                frame_filename=r["frame_filename"],
+                                track_id=r["track_id"],
+                                behaviour_class=r["behaviour_class"],
+                                confidence=r["confidence"],
+                                x1=r["x1"],
+                                y1=r["y1"],
+                                x2=r["x2"],
+                                y2=r["y2"],
+                                visual_evidence=r.get("visual_evidence", ""),
+                            )
+                            for _, r in curr_frame_preds.iterrows()
+                        ]
+                        frame_img = classifier.draw_behaviours(rgb, preds_list)
+
+            vis_col1, vis_col2 = st.columns([1.3, 1.0], gap="medium")
+
+            with vis_col1:
+                st.markdown(f"**Frame:** `{selected_frame_filename}` | **Index:** `{extracted_idx}` | **Time:** `{timestamp_val:.3f}s`")
+                if frame_img is not None:
+                    st.image(frame_img, caption=f"Classified Observable Behaviours in {selected_frame_filename}", use_container_width=True)
+                else:
+                    st.warning("Frame preview unavailable.")
+
+            with vis_col2:
+                st.markdown("##### 👥 Tracked People in this Frame")
+                if not curr_frame_preds.empty:
+                    display_cols = ["track_id", "behaviour_class", "confidence", "visual_evidence"]
+                    table_df = curr_frame_preds[display_cols].rename(columns={
+                        "track_id": "Track ID",
+                        "behaviour_class": "Observed Behaviour",
+                        "confidence": "Confidence",
+                        "visual_evidence": "Visual Evidence",
+                    })
+                    st.dataframe(table_df, use_container_width=True, hide_index=True)
+                else:
+                    st.info("No tracked people in this frame.")
+
+        st.markdown("---")
+
+        # Track-Level Chronological Sequence Viewer
+        st.subheader("⏱️ Track-Level Chronological Behaviour Sequence")
+        st.info(
+            "ℹ️ **Note on Temporal Sequence Display:** This section visualizes simple frame-by-frame observable behaviour records "
+            "for an individual Track ID over time. This **does NOT** constitute temporal sequence modeling. "
+            "Temporal models (CNN feature extraction, RNN, LSTM, GRU) are strictly reserved for upcoming features."
+        )
+
+        available_tracks = sorted(beh_df["track_id"].unique())
+        selected_track_id = st.selectbox(
+            "Select Student Track ID to inspect over time:",
+            options=available_tracks,
+            format_func=lambda tid: f"Track ID {tid}",
+            key="sb_track_temporal_inspect",
+        )
+
+        track_history = beh_df[beh_df["track_id"] == selected_track_id].sort_values("extracted_frame_index")
+        if not track_history.empty:
+            t_col1, t_col2 = st.columns([1.0, 1.2], gap="medium")
+
+            with t_col1:
+                st.markdown(f"##### Summary for Track ID {selected_track_id}")
+                st.markdown(f"- **Frames Active:** `{len(track_history)} frames`")
+                st.markdown(f"- **First Seen:** `{track_history['timestamp_seconds'].min():.2f}s` (Frame {track_history['extracted_frame_index'].min()})")
+                st.markdown(f"- **Last Seen:** `{track_history['timestamp_seconds'].max():.2f}s` (Frame {track_history['extracted_frame_index'].max()})")
+                dom_beh = track_history[track_history["behaviour_class"] != CLASS_UNKNOWN]["behaviour_class"].mode()
+                st.markdown(f"- **Dominant Observable Category:** `{dom_beh.iloc[0] if not dom_beh.empty else 'Unknown'}`")
+
+            with t_col2:
+                st.markdown("##### Chronological Observation Log")
+                log_df = track_history[["extracted_frame_index", "timestamp_seconds", "behaviour_class", "confidence"]].rename(columns={
+                    "extracted_frame_index": "Frame #",
+                    "timestamp_seconds": "Time (s)",
+                    "behaviour_class": "Observable Behaviour",
+                    "confidence": "Confidence",
+                })
+                st.dataframe(log_df, use_container_width=True, hide_index=True)
+
+        st.markdown("---")
+
+        # Behaviours Dataset Preview & CSV Download
+        st.subheader("📄 Behaviours Dataset (`behaviours.csv`)")
+        st.caption("Complete tabular record of observable behaviour classifications per frame and per track.")
+
+        st.dataframe(beh_df, use_container_width=True, hide_index=True)
+
+        csv_bytes = beh_df.to_csv(index=False).encode("utf-8")
+        st.download_button(
+            label="📥 Download Behaviours CSV",
+            data=csv_bytes,
+            file_name=f"{video_id}_behaviours.csv",
+            mime="text/csv",
+            help="Download complete observable behaviour recognition dataset.",
+            key="btn_download_behaviours_csv",
+        )
+
+
 def main():
     """Main application loop."""
     render_sidebar()
@@ -1072,7 +1466,14 @@ def main():
     if saved_path and saved_path.exists():
         render_tracking_section(saved_path)
 
+    st.markdown("---")
+
+    # Feature 5: Observable Behaviour Recognition Section
+    if saved_path and saved_path.exists():
+        render_behaviour_recognition_section(saved_path)
+
 
 if __name__ == "__main__":
     main()
+
 

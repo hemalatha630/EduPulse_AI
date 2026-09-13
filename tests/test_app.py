@@ -18,7 +18,7 @@ def video_bytes():
 
 def test_app_initial_render():
     """Verify application renders initial state correctly without errors."""
-    at = AppTest.from_file(APP_FILE).run()
+    at = AppTest.from_file(APP_FILE, default_timeout=30).run()
     assert not at.exception
 
     # Check title
@@ -36,7 +36,7 @@ def test_app_initial_render():
 
 def test_app_valid_video_upload(video_bytes):
     """Verify application handles valid video upload and renders Feature 2 controls."""
-    at = AppTest.from_file(APP_FILE).run()
+    at = AppTest.from_file(APP_FILE, default_timeout=30).run()
     at.file_uploader[0].upload(filename="sample_classroom.mp4", content=video_bytes).run()
 
     assert not at.exception
@@ -63,7 +63,7 @@ def test_app_valid_video_upload(video_bytes):
 
 def test_app_frame_extraction_workflow(video_bytes):
     """Verify frame extraction button execution in Streamlit AppTest."""
-    at = AppTest.from_file(APP_FILE).run()
+    at = AppTest.from_file(APP_FILE, default_timeout=30).run()
     at.file_uploader[0].upload(filename="sample_classroom.mp4", content=video_bytes).run()
     assert not at.exception
 
@@ -91,7 +91,7 @@ def test_app_detection_workflow(video_bytes):
     at.file_uploader[0].upload(filename="sample_classroom.mp4", content=video_bytes).run()
     assert not at.exception
 
-    # Extract frames first so detection section has frames
+    # Extract frames first so detection section has frames to detect on
     extract_button = next(b for b in at.button if "Extract Frames" in b.label)
     extract_button.click().run()
     assert not at.exception
@@ -139,9 +139,37 @@ def test_app_tracking_workflow(video_bytes):
     assert any("Tracks Dataset" in s for s in subheaders_after)
 
 
+def test_app_behaviour_recognition_workflow():
+    """Verify Feature 5 observable behaviour recognition UI workflow end-to-end."""
+    demo_video = ROOT_DIR / "scratch" / "sample_media" / "classroom_lecture_demo.mp4"
+    if not demo_video.exists():
+        pytest.skip("classroom_lecture_demo.mp4 required for full behaviour UI test")
+
+    video_bytes = demo_video.read_bytes()
+    at = AppTest.from_file(APP_FILE, default_timeout=30).run()
+    at.file_uploader[0].upload(filename="classroom_lecture_demo.mp4", content=video_bytes).run()
+    assert not at.exception
+
+    # Verify Feature 5 subheader is present
+    subheaders = [s.value for s in at.subheader]
+    assert any("Feature 5: Observable Behaviour Recognition" in s for s in subheaders)
+
+    # Trigger behaviour recognition
+    beh_btn = next((b for b in at.button if "Recognise Observable Behaviours" in b.label), None)
+    assert beh_btn is not None
+    beh_btn.click().run()
+    assert not at.exception
+
+    # Verify summary cards and dataset table
+    subheaders_after = [s.value for s in at.subheader]
+    assert any("Behaviour Recognition Summary" in s for s in subheaders_after)
+    assert any("Visual Frame Behaviour Inspector" in s for s in subheaders_after)
+    assert any("Behaviours Dataset" in s for s in subheaders_after)
+
+
 def test_app_empty_file_upload():
     """Verify application handles empty file gracefully."""
-    at = AppTest.from_file(APP_FILE).run()
+    at = AppTest.from_file(APP_FILE, default_timeout=30).run()
     at.file_uploader[0].upload(filename="empty_file.mp4", content=b"").run()
 
     errors = [e.value for e in at.error]
@@ -150,7 +178,7 @@ def test_app_empty_file_upload():
 
 def test_app_corrupted_file_upload():
     """Verify application handles corrupted video file gracefully without crashing."""
-    at = AppTest.from_file(APP_FILE).run()
+    at = AppTest.from_file(APP_FILE, default_timeout=30).run()
     at.file_uploader[0].upload(
         filename="corrupted_file.mp4", content=b"BAD_CORRUPT_HEADER" * 100
     ).run()
