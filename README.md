@@ -30,7 +30,7 @@ The system focuses exclusively on verifiable, observable physical behaviours rec
 
 ---
 
-## 2. Technology Stack (Features 1, 2, 3, 4, 5 & 6)
+## 2. Technology Stack (Features 1, 2, 3, 4, 5, 6 & 7)
 
 * **Programming Language:** Python 3.12+ (supports Python 3.11+)
 * **Web Application Framework:** Streamlit
@@ -38,12 +38,13 @@ The system focuses exclusively on verifiable, observable physical behaviours rec
 * **Object Detection & Deep Learning:** Ultralytics YOLO (`ultralytics`), PyTorch (`torch`, `torchvision`)
 * **Multi-Object Tracking:** ByteTrack & BoT-SORT (Linear Assignment Problem solver `lap`)
 * **Pretrained CNN Visual Backbone:** PyTorch Torchvision ResNet18 (512-dim visual embeddings)
+* **Temporal Sequence Generation:** Sliding-window chunking, NumPy 3D arrays, PyTorch `torch.utils.data.Dataset` (`ClassroomSequenceDataset`) and `DataLoader` compatibility
 * **Visualization & Plotting:** Matplotlib (`matplotlib`), Pillow (`Pillow`)
 * **Numerical Computing & SVD/PCA:** NumPy
 * **Data Structures & Processing:** Pandas
 * **Test Suite:** PyTest
 
-*(Future sequence modeling modules such as RNN/LSTM/GRU will be introduced in Feature 7 & 8).*
+*(Future sequence modeling modules such as RNN/LSTM/GRU will be introduced in Feature 8).*
 
 ---
 
@@ -52,7 +53,7 @@ The system focuses exclusively on verifiable, observable physical behaviours rec
 ```text
 EduPulse_AI/
 │
-├── app.py                              # Streamlit main application entry point (Features 1-6)
+├── app.py                              # Streamlit main application entry point (Features 1-7)
 │
 ├── data/                               # Data storage (git-ignored for student privacy)
 │   ├── videos/                         # Uploaded raw classroom videos
@@ -64,7 +65,9 @@ EduPulse_AI/
 │           ├── tracks.csv              # Feature 4 persistent temporal track records
 │           ├── behaviours.csv          # Feature 5 observable behaviour classifications
 │           ├── cnn_features.npy        # Feature 6 raw (N, 512) float32 feature array
-│           └── cnn_features_metadata.csv # Feature 6 spatial-temporal metadata mapping
+│           ├── cnn_features_metadata.csv # Feature 6 spatial-temporal metadata mapping
+│           ├── temporal_sequences.npy  # Feature 7 3D float32 sequence tensor (N, L, D)
+│           └── temporal_sequences_metadata.csv # Feature 7 sequence ledger & window mapping
 │
 ├── models/                             # Model weights directory
 │   └── yolov8n.pt                      # Pretrained YOLOv8n detector (~6.2 MB)
@@ -96,18 +99,22 @@ EduPulse_AI/
 │   │   ├── __init__.py
 │   │   ├── feature_extractor.py        # CNNFeatureExtractor (ResNet18 512D) & batch extraction
 │   │   └── visualization.py            # NumPy SVD 2D PCA projection & scatter plotting
-│   └── temporal/                       # Sequence modeling (RNN/LSTM/GRU) (Feature 7 & 8)
+│   └── temporal/                       # Temporal sequence creation & modeling (Feature 7 & 8)
+│       ├── __init__.py
+│       ├── sequence_generator.py       # Sliding-window sequence creator & PyTorch Dataset
+│       └── visualization.py            # Sequence timeline & track coverage charts
 │
 ├── results/                            # Evaluation logs and ablation outputs (future)
-├── tests/                              # Automated unit and integration tests (75 tests)
+├── tests/                              # Automated unit and integration tests (98 tests)
 │   ├── __init__.py
-│   ├── test_app.py                     # Streamlit UI integration tests (Features 1-6)
+│   ├── test_app.py                     # Streamlit UI integration tests (Features 1-7)
 │   ├── test_video_utils.py             # Video validation unit tests
 │   ├── test_frame_extractor.py         # Frame extraction, sampling, & preprocessor tests
 │   ├── test_detector.py                # YOLO person detection & annotation unit tests
 │   ├── test_tracker.py                 # Multi-object tracking, ID consistency, & trajectory tests
 │   ├── test_behaviour.py               # Observable behaviour recognition unit tests
-│   └── test_cnn.py                     # CNN ResNet18 loading, batch extraction, & PCA tests
+│   ├── test_cnn.py                     # CNN ResNet18 loading, batch extraction, & PCA tests
+│   └── test_temporal.py                # Temporal sequence generation & PyTorch Dataset tests
 │
 ├── requirements.txt                    # Core dependencies
 ├── .gitignore                          # Git ignore rules for video data & environment
@@ -521,38 +528,130 @@ data/processed/<video_id>/
 
 ---
 
-## 12. Automated Testing
+## 12. Feature 7 — Temporal Sequence Creation
 
-Run the complete PyTest suite covering video validation, preprocessing, frame sampling, person detection, multi-object tracking, observable behaviour recognition, CNN visual feature extraction, and Streamlit UI workflows:
+Feature 7 transforms individual frame-level CNN visual embeddings (Feature 6) into **chronologically ordered, fixed-length sliding-window temporal sequences** grouped strictly by tracked student (`track_id`). It forms the essential data preparation layer bridging static computer vision and downstream temporal sequence modeling (Feature 8).
+
+```text
+Feature 6 CNN Vectors (N_frames, 512) + Tracking (track_id)
+                      ↓
+           Track Partitioning & Isolation
+                      ↓
+    Chronological Sorting (extracted_frame_index)
+                      ↓
+     Tracking Gap Detection & Segment Splitting
+                      ↓
+       Sliding-Window Chunking (L=10, S=2)
+                      ↓
+      Temporal Sequences Tensor (N, L, 512)
+                      +
+  Spatial-Temporal Sequence Metadata (CSV ledger)
+                      ↓
+  PyTorch ClassroomSequenceDataset & DataLoader (Feature 8 Ready)
+```
+
+### Academic & Engineering Rationale
+* **Separation of Concerns:** Data organization is strictly decoupled from model training/inference. Sequence creation structures temporal representations without assuming a specific classifier architecture.
+* **Track-Wise Isolation:** Each sequence contains observations from exactly one student track. Observations from different individuals are **never mixed**, preventing artificial transition artifacts.
+* **Preservation of Chronological Flow:** Within each track, observations are sorted by extracted frame index and video timestamp to ensure strictly increasing time steps ($t_1 < t_2 < \dots < t_L$).
+* **Sliding Window Formulation:** Given a continuous track segment of $M$ observations, window length $L$, and stride $S$, the number of generated sequences is:
+  $$\text{Num Sequences} = \left\lfloor \frac{M - L}{S} \right\rfloor + 1$$
+* **Gap Splitting Policy:** If the tracking gap between consecutive observations exceeds tolerance ($G$ frames, default 2), the track is split into continuous sub-segments to prevent unobserved jumps.
+* **Short Track Skipping:** Track segments with fewer than $L$ observations are safely skipped and reported in the metrics summary, avoiding distorted zero-padded windows.
+* **Observable Behaviour Alignment:** Each sequence window is annotated with its dominant observable behaviour (statistical mode), mean classification confidence, transition chain string (`A -> B -> C`), and explicit list of frame indices and timestamps.
+* **Prevention of Data Leakage:** Because all sequences maintain explicit `track_id` attribution, future train/validation/test splits can be performed strictly at the student level rather than randomly splitting overlapping windows.
+
+### Artifacts & Decoupled Storage (`data/processed/<video_id>/`)
+
+1. **`temporal_sequences.npy`**: 3D float32 NumPy array of shape $(N_\text{sequences}, L, D)$ storing the raw numerical visual sequences.
+2. **`temporal_sequences_metadata.csv`**: Comprehensive tabular ledger mapping each sequence index to its spatial-temporal parameters:
+
+| Column | Type | Description |
+| :--- | :--- | :--- |
+| `sequence_id` | `int` | Sequential 0-indexed sequence identifier matching the first dimension of `.npy` |
+| `video_id` | `str` | Video identifier stem |
+| `track_id` | `int` | Persistent student Track ID from Feature 4 |
+| `start_frame_id` | `int` | Original video frame index at sequence start ($t_1$) |
+| `end_frame_id` | `int` | Original video frame index at sequence end ($t_L$) |
+| `start_extracted_frame_index` | `int` | Chronological extracted frame number at window start |
+| `end_extracted_frame_index` | `int` | Chronological extracted frame number at window end |
+| `start_timestamp_seconds` | `float` | Video playback timestamp at window start |
+| `end_timestamp_seconds` | `float` | Video playback timestamp at window end |
+| `duration_seconds` | `float` | Total elapsed duration of the sequence window in seconds |
+| `sequence_length` | `int` | Number of time steps ($L$, default 10) |
+| `feature_dimension` | `int` | Visual embedding dimensionality ($D=512$) |
+| `dominant_behaviour` | `str` | Most frequent observable behaviour class within the sequence window |
+| `mean_behaviour_confidence` | `float` | Average classification confidence of behaviours across the window |
+| `behaviour_sequence` | `str` | Full transition chain across window steps (`Listening -> Writing`) |
+| `frame_indices` | `str (JSON)` | JSON array of exact extracted frame numbers for all $L$ steps |
+| `frame_timestamps` | `str (JSON)` | JSON array of exact playback timestamps for all $L$ steps |
+
+### PyTorch Integration (`ClassroomSequenceDataset`)
+A native PyTorch `Dataset` adapter is provided in `src.temporal`:
+
+```python
+from torch.utils.data import DataLoader
+from src.temporal import ClassroomSequenceDataset
+import numpy as np
+import pandas as pd
+
+# Load decoupled artifacts
+sequences = np.load("data/processed/video_id/temporal_sequences.npy")  # (N, 10, 512)
+metadata = pd.read_csv("data/processed/video_id/temporal_sequences_metadata.csv")
+
+# Create PyTorch Dataset & DataLoader
+dataset = ClassroomSequenceDataset(sequences=sequences, metadata_df=metadata)
+dataloader = DataLoader(dataset, batch_size=8, shuffle=True)
+
+# Ready for Feature 8 sequence models (RNN / LSTM / GRU)
+for batch_tensors, batch_meta in dataloader:
+    # batch_tensors shape: torch.Size([8, 10, 512])
+    pass
+```
+
+### Interactive Streamlit Interface
+* **Configurable Controls:** Sliders for sequence length $L$ (3–30), stride $S$ (1–10), and max frame gap tolerance $G$ (1–10).
+* **Summary Metrics:** Total sequences created, unique student tracks covered, short tracks skipped, PyTorch tensor shape $(N, L, D)$, and average duration.
+* **Interactive Sequence Inspector:** Dropdown to select any sequence and view its Track ID, frame window, video timestamps, dominant behaviour, mean confidence, and transition chain.
+* **Sequence Timeline Visualization:** Visual plot showing the visual embedding L2 norm progression across time steps with aligned observable behaviour markers.
+* **Track Temporal Coverage Chart:** Gantt-style timeline chart illustrating the coverage windows of temporal sequences across all active student tracks.
+* **PyTorch Code Snippet:** Live copy-pasteable PyTorch DataLoader code block populated with actual tensor dimensions.
+* **Artifact Downloads:** Direct download buttons for `temporal_sequences_metadata.csv` and binary `temporal_sequences.npy`.
+
+---
+
+## 13. Automated Testing
+
+Run the complete PyTest suite covering video validation, preprocessing, frame sampling, person detection, multi-object tracking, observable behaviour recognition, CNN visual feature extraction, temporal sequence creation, and Streamlit UI workflows:
 
 ```bash
 pytest tests/ -v
 ```
 
-The **75-test automated suite** covers:
+The **98-test automated suite** covers:
 * `test_video_utils.py` (14 tests): Filename sanitization, path traversal prevention, extension validation, OpenCV decodability, empty/corrupt file rejection, metadata extraction.
 * `test_frame_extractor.py` (13 tests): Image validation, color conversion, resizing, chronological timestamp ordering, sampling ratios, CSV schema verification, cache handling.
 * `test_detector.py` (7 tests): YOLO model initialization, person detection inference on classroom scenes, confidence threshold filtering, bounding box rendering, empty/zero-person frame handling, invalid inputs, and batch pipeline execution.
 * `test_tracker.py` (9 tests): Tracker initialization (ByteTrack & BoT-SORT), persistent color generation, consecutive frame tracking continuity, confidence threshold filtering, zero-person handling, trajectory rendering, tracker reset, and end-to-end `tracks.csv` schema validation.
 * `test_behaviour.py` (12 tests): Target behaviour labels & metadata, person crop preprocessing & clipping, invalid crop rejection, prototype mode initialization, visual heuristic prediction, peer proximity logic, blur/unknown handling, visual badge drawing, mock PyTorch model forward pass, and end-to-end pipeline execution with `behaviours.csv` validation.
 * `test_cnn.py` (11 tests): ResNet18 model loading, classification head removal, CPU/CUDA device auto-detection, single-crop extraction (512D), batch extraction (B, 512), invalid/empty/out-of-bounds crop safety, end-to-end pipeline execution on synthetic video sequences, temporal order preservation, behaviour label linking, and 2D PCA projection/figure generation.
-* `test_app.py` (9 tests): Streamlit end-to-end UI integration tests covering initial render, file upload, metric cards, extraction button triggers, detection workflows, Feature 4 tracking workflows, Feature 5 behaviour recognition workflows, Feature 6 CNN extraction workflows, and corrupted upload handling.
+* `test_temporal.py` (22 tests): Parameter validation, sliding-window count formula verification, chronological frame index sorting, short track skipping policy, gap splitting policy, multi-track isolation, dominant behaviour calculation, PyTorch FloatTensor conversion, `ClassroomSequenceDataset` DataLoader batching, end-to-end pipeline execution with `.npy` + `.csv` file output, and timeline/coverage visualizations.
+* `test_app.py` (10 tests): Streamlit end-to-end UI integration tests covering initial render, file upload, metric cards, extraction button triggers, detection workflows, Feature 4 tracking workflows, Feature 5 behaviour recognition workflows, Feature 6 CNN extraction workflows, Feature 7 temporal sequence creation workflows, and corrupted upload handling.
 
 ---
 
-## 13. Current Limitations (Features 1–6 Scope)
+## 14. Current Limitations (Features 1–7 Scope)
 
-Features 1 through 6 focus on **Classroom Video Ingestion, Preprocessing, Frame Extraction, Person Detection, Multi-Object Tracking, Observable Behaviour Recognition, and CNN Visual Feature Extraction**.
+Features 1 through 7 focus on **Classroom Video Ingestion, Preprocessing, Frame Extraction, Person Detection, Multi-Object Tracking, Observable Behaviour Recognition, CNN Visual Feature Extraction, and Temporal Sequence Creation**.
 
 Current limitations:
-* Pretrained ImageNet features capture general visual representations (posture, objects, appearance) but have not been fine-tuned on custom classroom datasets.
-* Temporal sequence modeling (RNN / LSTM / GRU) is not yet implemented (scheduled for Features 7 & 8).
-* Feature vectors represent visual spatial snapshots, not mental engagement or internal cognitive states.
-* Feature sequences have not yet been framed into sliding temporal windows.
+* Temporal sequence modeling (RNN / LSTM / GRU training and inference) is not yet implemented (scheduled for Feature 8).
+* Sequences represent chronological windows of observable visual features and do not infer mental engagement, cognitive focus, motivation, or boredom.
+* Fixed-length sliding windows do not yet adapt dynamically to varying lesson segment durations.
 
 ---
 
-## 14. Future Research Pipeline Roadmap
+## 15. Future Research Pipeline Roadmap
 
 The subsequent development phases will follow this structured academic pipeline:
 
@@ -569,7 +668,7 @@ Observable Behaviour Recognition (Spatial Action Analysis) (Feature 5 — Comple
    ↓
 CNN Visual Feature Extraction (Spatial Representations) (Feature 6 — Completed)
    ↓
-Temporal Sequence Creation (Sliding Window Time Sequences) (Feature 7 — Upcoming)
+Temporal Sequence Creation (Sliding Window Time Sequences) (Feature 7 — Completed)
    ↓
 Sequence Modeling (RNN / LSTM / GRU) (Feature 8)
    ↓
@@ -583,4 +682,5 @@ Ablation Studies & Temporal Error Analysis (Feature 12)
    ↓
 Final Interactive Analytics Dashboard (Feature 13)
 ```
+
 

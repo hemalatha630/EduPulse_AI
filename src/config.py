@@ -62,6 +62,13 @@ CNN_FEATURES_NPY_FILENAME = "cnn_features.npy"
 CNN_METADATA_CSV_FILENAME = "cnn_features_metadata.csv"
 DEFAULT_CNN_BATCH_SIZE = 16
 
+# Feature 7 Configuration: Temporal Sequence Creation
+DEFAULT_SEQUENCE_LENGTH = 10
+DEFAULT_SEQUENCE_STRIDE = 2
+DEFAULT_MAX_FRAME_GAP = 2
+TEMPORAL_SEQUENCES_NPY_FILENAME = "temporal_sequences.npy"
+TEMPORAL_SEQUENCES_METADATA_FILENAME = "temporal_sequences_metadata.csv"
+
 # Project Metadata
 PROJECT_TITLE = "Temporal Learning-Engagement Profiling from Classroom Videos"
 PROJECT_SHORT_TITLE = "EduPulse AI"
