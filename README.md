@@ -30,18 +30,19 @@ The system focuses exclusively on verifiable, observable physical behaviours rec
 
 ---
 
-## 2. Technology Stack (Features 1, 2 & 3)
+## 2. Technology Stack (Features 1, 2, 3 & 4)
 
 * **Programming Language:** Python 3.12+ (supports Python 3.11+)
 * **Web Application Framework:** Streamlit
 * **Computer Vision & Video Processing:** OpenCV (`opencv-python`)
 * **Object Detection & Deep Learning:** Ultralytics YOLO (`ultralytics`), PyTorch (`torch`, `torchvision`)
-* **Image Processing:** Pillow (`Pillow`)
+* **Multi-Object Tracking:** ByteTrack & BoT-SORT (Linear Assignment Problem solver `lap`)
+* **Visualization & Plotting:** Matplotlib (`matplotlib`), Pillow (`Pillow`)
 * **Numerical Computing:** NumPy
 * **Data Structures & Processing:** Pandas
 * **Test Suite:** PyTest
 
-*(Future deep learning modules such as multi-object tracking, CNN behaviour classification, and RNN/LSTM/GRU temporal modeling will be introduced in subsequent feature milestones).*
+*(Future deep learning modules such as CNN behaviour classification and RNN/LSTM/GRU temporal modeling will be introduced in subsequent feature milestones).*
 
 ---
 
@@ -50,15 +51,16 @@ The system focuses exclusively on verifiable, observable physical behaviours rec
 ```text
 EduPulse_AI/
 │
-├── app.py                          # Streamlit main application entry point (Features 1-3)
+├── app.py                          # Streamlit main application entry point (Features 1-4)
 │
 ├── data/                           # Data storage (git-ignored for student privacy)
 │   ├── videos/                     # Uploaded raw classroom videos
 │   ├── frames/                     # Extracted and sampled video frames (<video_id>/)
-│   └── processed/                  # Processed metadata and detection outputs (<video_id>/)
+│   └── processed/                  # Processed metadata, detection, & tracking outputs (<video_id>/)
 │       └── <video_id>/
 │           ├── frame_metadata.csv  # Feature 2 chronological frame index
-│           └── detections.csv      # Feature 3 per-frame bounding box coordinates
+│           ├── detections.csv      # Feature 3 per-frame bounding box coordinates
+│           └── tracks.csv          # Feature 4 persistent temporal track records
 │
 ├── models/                         # Model weights directory
 │   └── yolov8n.pt                  # Pretrained YOLOv8n detector (~6.2 MB)
@@ -67,7 +69,7 @@ EduPulse_AI/
 │
 ├── src/                            # Modular source code
 │   ├── __init__.py
-│   ├── config.py                   # Central paths, sampling defaults, & detection configs
+│   ├── config.py                   # Central paths, sampling defaults, & tracking configs
 │   ├── video/                      # Video ingestion & frame extraction
 │   │   ├── __init__.py
 │   │   ├── video_utils.py          # Video validation, metadata extraction, sanitization
@@ -78,18 +80,21 @@ EduPulse_AI/
 │   ├── detection/                  # Student / Person Detection (Feature 3)
 │   │   ├── __init__.py
 │   │   └── detector.py             # YOLOPersonDetector & detection pipeline
-│   ├── tracking/                   # Student tracking (Feature 4 — upcoming)
-│   ├── behaviour/                  # Observable behaviour classification (future)
+│   ├── tracking/                   # Student / Person Tracking (Feature 4)
+│   │   ├── __init__.py
+│   │   └── tracker.py              # PersonTracker (ByteTrack/BoT-SORT), TrackResult, & trajectory engine
+│   ├── behaviour/                  # Observable behaviour classification (Feature 5 — upcoming)
 │   ├── cnn/                        # Spatial visual feature extraction (future)
 │   └── temporal/                   # Sequence modeling (RNN/LSTM/GRU) (future)
 │
 ├── results/                        # Evaluation logs and ablation outputs (future)
 ├── tests/                          # Automated unit and integration tests
 │   ├── __init__.py
-│   ├── test_app.py                 # Streamlit UI integration tests (Features 1, 2 & 3)
+│   ├── test_app.py                 # Streamlit UI integration tests (Features 1, 2, 3 & 4)
 │   ├── test_video_utils.py         # Video validation unit tests
 │   ├── test_frame_extractor.py     # Frame extraction, sampling, & preprocessor tests
-│   └── test_detector.py            # YOLO person detection & annotation unit tests
+│   ├── test_detector.py            # YOLO person detection & annotation unit tests
+│   └── test_tracker.py             # Multi-object tracking, ID consistency, & trajectory unit tests
 │
 ├── requirements.txt                # Core dependencies
 ├── .gitignore                      # Git ignore rules for video data & environment
@@ -287,36 +292,98 @@ The Streamlit application provides:
 
 ---
 
-## 9. Automated Testing
+## 9. Feature 4 — Student / Person Tracking
 
-Run the comprehensive PyTest suite covering video validation, preprocessing, frame sampling, person detection, and Streamlit UI workflows:
+Feature 4 bridges frame-level spatial detection and future temporal sequence modeling by connecting individual person detections across consecutive video frames into persistent, anonymous **Track IDs**.
+
+### What Is Multi-Object Tracking & Why Is It Needed?
+* **Detection (Feature 3):** Identifies *where* people are located in isolated frames without any memory of previous frames.
+* **Tracking (Feature 4):** Identifies *which* detection in frame $t$ corresponds to the *same* physical person in frame $t+1$, preserving continuity across time.
+* **Why Tracking Is Essential:** Analyzing temporal behaviour trajectories (Feature 5+) requires linking observations to the same individual over a time window rather than treating each frame as an unrelated collection of people.
+
+### Selected Tracking Algorithms
+* **ByteTrack (Default & Recommended):** High-speed association algorithm that matches both high-confidence and low-confidence detection boxes using Kalman filter state predictions and IoU matching. This retains tracks even when a student is momentarily occluded by a peer, laptop, or desk.
+* **BoT-SORT (Supported Alternative):** Integrates camera motion compensation (GMC) and enhanced Kalman filtering for dynamic camera setups.
+
+### Anonymous Track IDs vs. Real Identities
+> [!IMPORTANT]
+> **Feature 4 maintains anonymous temporary Track IDs for detected people across video frames. These IDs DO NOT represent real student identities.**
+> - Track IDs (e.g. `ID: 1`, `ID: 2`) are arbitrary integers generated solely for mathematical continuity.
+> - The system strictly **DOES NOT** store student names, roll numbers, or university IDs.
+> - Facial recognition, identity classification, demographic estimation (age/gender), and subjective emotional profiling are strictly excluded.
+
+### Classroom Tracking Challenges & Occlusion Handling
+Classroom environments present unique computer vision challenges:
+* **Dense Seating & Mutual Occlusion:** Students in adjacent lecture rows frequently overlap in camera perspective. ByteTrack's two-stage matching recovers occluded students without immediately terminating tracks.
+* **ID Switches:** If a student is obscured behind a standing peer or moves completely out of view for several seconds, the tracker may instantiate a new Track ID upon re-detection. This is a known, expected characteristic of visual tracking.
+* **Spatial Centroid Paths:** Tracking records image-plane bounding box centers $(center\_x, center\_y)$. These represent physical motion across frames, **not** cognitive engagement, attention, or comprehension.
+
+### Tracking Output Storage & Schema (`tracks.csv`)
+Tracking outputs are saved in structured tabular format:
+```text
+data/processed/<video_id>/tracks.csv
+```
+
+| Field | Type | Description |
+| :--- | :--- | :--- |
+| `video_id` | `str` | Video identifier derived from filename |
+| `frame_id` | `int` | 0-indexed position in source video stream |
+| `extracted_frame_index` | `int` | 1-indexed sequential frame number in extracted frames |
+| `timestamp_seconds` | `float` | Exact elapsed time in source video (seconds) |
+| `frame_filename` | `str` | Associated image filename (`frame_000001.jpg`) |
+| `track_id` | `int` | Anonymous temporary tracking integer identifier |
+| `class_id` | `int` | COCO class ID (`0` for person) |
+| `class_name` | `str` | Class label (`person`) |
+| `confidence` | `float` | Detection confidence score ($0.0 \le c \le 1.0$) |
+| `x1` | `float` | Bounding box top-left $X$ coordinate (pixels) |
+| `y1` | `float` | Bounding box top-left $Y$ coordinate (pixels) |
+| `x2` | `float` | Bounding box bottom-right $X$ coordinate (pixels) |
+| `y2` | `float` | Bounding box bottom-right $Y$ coordinate (pixels) |
+| `center_x` | `float` | Bounding box center point horizontal coordinate $(x_1 + x_2)/2$ |
+| `center_y` | `float` | Bounding box center point vertical coordinate $(y_1 + y_2)/2$ |
+
+### Interactive Tracking UI Capabilities
+1. **Configurable Controls:** Tracker algorithm selector (ByteTrack / BoT-SORT), confidence slider ($0.10 - 1.00$), sequence range selector, and trajectory trail toggle.
+2. **Tracking Summary Cards:** Total frames processed, unique tracks, average active tracks per frame, and longest continuous track duration.
+3. **Sequential Tracking Visualizer:**
+   - Single Frame View: Persistent colored bounding boxes, Track ID badges, centroid dots, and trajectory trails.
+   - Consecutive Comparison View: Side-by-side comparison of Frame $N-1$ and Frame $N$ with highlighted persisting track IDs.
+4. **Spatial Trajectory Map:** 2D centroid movement scatter/line plot displaying paths over time across classroom coordinates.
+5. **Dataset Export:** Structured preview table and one-click `tracks.csv` download.
+
+---
+
+## 10. Automated Testing
+
+Run the comprehensive PyTest suite covering video validation, preprocessing, frame sampling, person detection, multi-object tracking, and Streamlit UI workflows:
 
 ```bash
 pytest tests/ -v
 ```
 
-The 40-test automated suite covers:
+The 50-test automated suite covers:
 * `test_video_utils.py` (14 tests): Filename sanitization, path traversal prevention, extension validation, OpenCV decodability, empty/corrupt file rejection, metadata extraction.
-* `test_frame_extractor.py` (13 tests): Image validation, color conversion, resizing, chronological timestamp ordering, sampling ratios (1:1, 1:5, 1:10), CSV schema verification, cache handling.
-* `test_detector.py` (7 tests): YOLO model initialization, person detection inference on classroom scenes, confidence threshold filtering, bounding box rendering, empty/zero-person frame handling, invalid inputs, and end-to-end batch pipeline execution.
-* `test_app.py` (6 tests): Streamlit end-to-end UI integration tests covering initial render, file upload, metric cards, extraction button triggers, extraction summaries, Feature 3 person detection workflows, previews, and corrupted upload handling.
+* `test_frame_extractor.py` (13 tests): Image validation, color conversion, resizing, chronological timestamp ordering, sampling ratios, CSV schema verification, cache handling.
+* `test_detector.py` (7 tests): YOLO model initialization, person detection inference on classroom scenes, confidence threshold filtering, bounding box rendering, empty/zero-person frame handling, invalid inputs, and batch pipeline execution.
+* `test_tracker.py` (9 tests): Tracker initialization (ByteTrack & BoT-SORT), persistent color generation, consecutive frame tracking continuity, confidence threshold filtering, zero-person handling, trajectory rendering, tracker reset, and end-to-end `tracks.csv` schema validation.
+* `test_app.py` (7 tests): Streamlit end-to-end UI integration tests covering initial render, file upload, metric cards, extraction button triggers, detection workflows, Feature 4 tracking workflows, previews, and corrupted upload handling.
 
 ---
 
-## 10. Current Limitations (Features 1, 2 & 3 Scope)
+## 11. Current Limitations (Features 1, 2, 3 & 4 Scope)
 
-Features 1, 2, and 3 focus exclusively on **Classroom Video Ingestion, Preprocessing, Chronological Frame Extraction, and Spatial Person Detection**.
+Features 1, 2, 3, and 4 focus exclusively on **Classroom Video Ingestion, Preprocessing, Frame Extraction, Person Detection, and Multi-Object Tracking**.
 
 Current limitations:
-* Student tracking across temporal sequences is not yet active (no persistent IDs across frames; reserved for Feature 4).
 * Observable classroom behaviour classification is not yet implemented (reserved for Feature 5).
 * CNN visual feature extraction is not yet active (Feature 6).
 * Temporal sequence modeling (RNN / LSTM / GRU) is not yet active (Feature 7).
+* Track IDs represent temporary spatial paths, not long-term student attendance or biometric identity.
 * Cloud / cluster distributed processing is not yet enabled.
 
 ---
 
-## 11. Future Research Pipeline Roadmap
+## 12. Future Research Pipeline Roadmap
 
 The subsequent development phases will follow this structured academic pipeline:
 
@@ -327,9 +394,9 @@ Frame Extraction & Preprocessing (Feature 2 — Completed)
    ↓
 Student Detection (YOLO / Spatial Bounding Boxes) (Feature 3 — Completed)
    ↓
-Student Tracking (DeepSORT / ByteTrack Multi-Object Tracking) (Feature 4 — Upcoming)
+Student Tracking (ByteTrack / BoT-SORT Multi-Object Tracking) (Feature 4 — Completed)
    ↓
-Observable Behaviour Recognition (Spatial Action Analysis) (Feature 5)
+Observable Behaviour Recognition (Spatial Action Analysis) (Feature 5 — Upcoming)
    ↓
 CNN Visual Feature Extraction (Spatial Representations) (Feature 6)
    ↓
