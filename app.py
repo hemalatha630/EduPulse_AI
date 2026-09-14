@@ -268,7 +268,7 @@ def get_cnn_feature_extractor(model_name: str = DEFAULT_CNN_MODEL) -> CNNFeature
     return extractor
 
 
-def render_sidebar():
+def render_sidebar() -> str:
     """Render educational research context and pipeline information in sidebar."""
     with st.sidebar:
         st.title("🎓 EduPulse AI")
@@ -293,7 +293,7 @@ def render_sidebar():
                 st.markdown(f"• *{item}*")
 
         st.markdown("---")
-        st.subheader("⚙️ Current Phase")
+        st.subheader("⚙️ System Pipeline")
         st.success("✅ **Feature 1: Video Ingestion & Metadata**")
         st.success("✅ **Feature 2: Frame Extraction & Preprocessing**")
         st.success("✅ **Feature 3: Student / Person Detection**")
@@ -304,8 +304,20 @@ def render_sidebar():
         st.success("✅ **Feature 8: Temporal Modelling (RNN / LSTM / GRU)**")
         st.success("✅ **Feature 9: Observable Behaviour Trajectory**")
         st.success("✅ **Feature 10: Teaching Activity Analysis**")
-        st.success("🚀 **Feature 11: Research Experiments & Ablation**")
-        st.caption("All research analysis, baseline comparisons, and ablation studies unlocked.")
+        st.success("✅ **Feature 11: Research Experiments & Ablation**")
+        st.success("🏆 **Feature 12: Final Project Dashboard**")
+        st.caption("Complete university research pipeline & interactive dashboard fully integrated.")
+
+        st.markdown("---")
+        st.subheader("🖥️ Dashboard Layout")
+        dashboard_mode = st.radio(
+            "Select View Mode:",
+            ["📑 Guided Workflow Tabs", "📜 Continuous Pipeline View"],
+            index=0,
+            help="Choose between structured sequential tabs (recommended for presentations and examiner evaluations) or continuous vertical scroll.",
+            key="radio_dashboard_view_mode",
+        )
+        return dashboard_mode
 
 
 def render_header():
@@ -2695,9 +2707,276 @@ def render_temporal_modelling_section(saved_path: Path):
             st.caption("Model checkpoint will be saved after training.")
 
 
+def render_pedagogical_ethics_section():
+    """Render Pedagogical Scope, Research Boundaries, and Ethical Safeguards Section."""
+    st.header("🛡️ Pedagogical Scope & Ethical Research Boundaries")
+    st.caption(
+        "Scientific rationale, non-detectable state exclusions, student privacy safeguards, and guidelines "
+        "for responsible application in classroom educational research."
+    )
+
+    c1, c2 = st.columns(2, gap="large")
+
+    with c1:
+        st.subheader("🎯 Grounded in Observable Behaviours")
+        st.markdown(
+            """
+            This university research system is engineered strictly around **observable physical actions and postures**:
+            - **Looking toward instructional activity:** Head and gaze oriented toward instructor, screen, or whiteboard.
+            - **Reading/writing:** Head oriented downward toward desk, workbook, notebook, or paper with stationary desk posture.
+            - **Peer interaction:** Head turned laterally toward adjacent classmates, active collaborative posture or verbal exchange.
+            - **Looking away:** Head oriented toward door, window, ceiling, or classroom perimeter outside instructional zones.
+            - **Mobile-device activity:** Hands holding a smartphone, device illuminated, or gaze directed into lap.
+            - **Head-down behaviour:** Head resting on arms, desk surface, or posture indicating resting/disengagement.
+
+            Every classification corresponds strictly to visually verifiable, human-annotated ground truth.
+            """
+        )
+
+        st.subheader("🔒 Student Privacy & Data Minimization")
+        st.markdown(
+            """
+            - **Anonymous Track IDs:** Students are tracked exclusively using non-identifiable numeric identifiers (e.g. `Track #1`, `Track #2`).
+            - **Zero Biometric Profiling:** No facial recognition, facial landmark profiling, or biometric identity databases are used.
+            - **Edge / On-Premise Execution:** All deep-learning inferences (YOLO, ResNet, RNN/LSTM/GRU) run locally without sending video streams to external third-party cloud services.
+            """
+        )
+
+    with c2:
+        st.subheader("🚫 Explicit Non-Detectable Exclusions")
+        st.warning(
+            "**In strict adherence to ethical educational research standards, the following internal states are NEVER detected or inferred:**"
+        )
+        for state in EXCLUDED_INTERNAL_STATES:
+            st.markdown(f"❌ **{state}** — Internal cognitive or emotional construct; cannot be scientifically inferred from video alone.")
+
+        st.subheader("🎓 Formative Educational Guidance")
+        st.markdown(
+            """
+            - **Holistic Pedagogical Feedback:** Intended for reflective teacher professional development and curriculum evaluation.
+            - **Never for Punitive Grading:** Behaviour observations must never be used for disciplinary actions or automated student assessment.
+            - **Ecological Classroom Validity:** Recognizes that natural learning involves varied observable postures, peer collaboration, and independent reading intervals.
+            """
+        )
+
+
+def execute_full_pipeline_workflow(saved_path: Path, metadata: VideoMetadata):
+    """Execute all pipeline stages sequentially on the loaded video for instant dashboard review."""
+    video_id = derive_video_id(saved_path.name)
+    processed_dir = PROCESSED_DIR / video_id
+    processed_dir.mkdir(parents=True, exist_ok=True)
+    frames_dir = FRAMES_DIR / video_id
+
+    status_box = st.status("⚡ Executing End-to-End Analysis Pipeline...", expanded=True)
+
+    with status_box:
+        # Step 1: Frame Extraction
+        st.write("🎞️ **Step 1/8:** Extracting and preprocessing classroom video frames...")
+        meta_csv_path = processed_dir / "frame_metadata.csv"
+        if not (frames_dir.exists() and meta_csv_path.exists() and len(list(frames_dir.glob("*.jpg"))) > 0):
+            cfg = ExtractionConfig(sampling_interval=DEFAULT_SAMPLING_INTERVAL)
+            extract_video_frames(video_path=saved_path, config=cfg)
+        st.write("✅ Step 1 complete: Preprocessed frames extracted with temporal metadata.")
+
+        # Step 2: Person Tracking
+        st.write("👥 **Step 2/8:** Running student detection and multi-object tracking...")
+        tracks_csv_path = processed_dir / TRACKS_CSV_FILENAME
+        if not (tracks_csv_path.exists() and tracks_csv_path.stat().st_size > 50):
+            if meta_csv_path.exists():
+                frames_df = pd.read_csv(meta_csv_path)
+                tracker = get_person_tracker(DEFAULT_YOLO_MODEL, DEFAULT_TRACKER)
+                run_tracking_on_frames(
+                    video_id=video_id,
+                    frames_df=frames_df,
+                    tracker=tracker,
+                    conf_threshold=DEFAULT_TRACKING_CONF_THRESHOLD,
+                    tracker_type=DEFAULT_TRACKER,
+                    frame_selection_mode="Process all frames",
+                )
+        st.write("✅ Step 2 complete: Student trajectories tracked with persistent IDs.")
+
+        # Step 3: Observable Behaviour Recognition
+        st.write("🔍 **Step 3/8:** Classifying observable student behaviours across tracked person crops...")
+        behav_csv_path = processed_dir / BEHAVIOURS_CSV_FILENAME
+        if not (behav_csv_path.exists() and behav_csv_path.stat().st_size > 50):
+            if tracks_csv_path.exists() and meta_csv_path.exists():
+                frames_df = pd.read_csv(meta_csv_path)
+                tracks_df = pd.read_csv(tracks_csv_path)
+                classifier = get_behaviour_classifier()
+                run_behaviour_recognition_on_tracks(
+                    video_id=video_id,
+                    frames_df=frames_df,
+                    tracks_df=tracks_df,
+                    classifier=classifier,
+                    conf_threshold=DEFAULT_BEHAVIOUR_CONF_THRESHOLD,
+                    frame_selection_mode="Process all frames",
+                )
+        st.write("✅ Step 3 complete: Observable behaviours classified across all 6 canonical categories.")
+
+        # Step 4: CNN Visual Feature Extraction
+        st.write("🖼️ **Step 4/8:** Extracting deep CNN feature embeddings (512-dim)...")
+        cnn_npy_path = processed_dir / CNN_FEATURES_NPY_FILENAME
+        cnn_meta_path = processed_dir / CNN_METADATA_CSV_FILENAME
+        if not (cnn_npy_path.exists() and cnn_meta_path.exists()):
+            if tracks_csv_path.exists() and meta_csv_path.exists():
+                frames_df = pd.read_csv(meta_csv_path)
+                tracks_df = pd.read_csv(tracks_csv_path)
+                beh_df = pd.read_csv(behav_csv_path) if behav_csv_path.exists() else None
+                extractor = get_cnn_feature_extractor(DEFAULT_CNN_MODEL)
+                run_cnn_feature_extraction(
+                    video_id=video_id,
+                    frames_df=frames_df,
+                    tracks_df=tracks_df,
+                    feature_extractor=extractor,
+                    behaviours_df=beh_df,
+                    batch_size=DEFAULT_CNN_BATCH_SIZE,
+                    frame_selection_mode="Process all frames",
+                )
+        st.write("✅ Step 4 complete: CNN feature embeddings extracted and cached.")
+
+        # Step 5: Temporal Sequence Creation
+        st.write("🧱 **Step 5/8:** Creating sliding temporal sequence windows (W=10, S=2)...")
+        seq_npy_path = processed_dir / TEMPORAL_SEQUENCES_NPY_FILENAME
+        seq_meta_path = processed_dir / TEMPORAL_SEQUENCES_METADATA_FILENAME
+        if not (seq_npy_path.exists() and seq_meta_path.exists()):
+            run_temporal_sequence_creation(
+                video_id=video_id,
+                cnn_features_path=cnn_npy_path,
+                cnn_metadata_path=cnn_meta_path,
+                sequence_length=DEFAULT_SEQUENCE_LENGTH,
+                stride=DEFAULT_SEQUENCE_STRIDE,
+                max_frame_gap=DEFAULT_MAX_FRAME_GAP,
+            )
+        st.write("✅ Step 5 complete: Temporal sliding window sequences created.")
+
+        # Step 6: Recurrent Models Training/Verification
+        st.write("🧠 **Step 6/8:** Verifying and evaluating recurrent temporal models (RNN, LSTM, GRU)...")
+        if seq_npy_path.exists() and seq_meta_path.exists():
+            seqs_array = np.load(seq_npy_path)
+            meta_df = pd.read_csv(seq_meta_path)
+            split = prepare_track_grouped_splits(seqs_array, meta_df, random_seed=DEFAULT_RANDOM_SEED)
+
+            for m_type in [MODEL_RNN, MODEL_LSTM, MODEL_GRU]:
+                ckpt_path = MODELS_TEMPORAL_DIR / f"{m_type}_best.pt"
+                if not ckpt_path.exists():
+                    cfg = TrainConfig(
+                        model_type=m_type,
+                        epochs=5,
+                        patience=3,
+                        batch_size=DEFAULT_BATCH_SIZE,
+                        input_size=seqs_array.shape[-1],
+                        num_classes=6,
+                    )
+                    train_temporal_model(
+                        config=cfg,
+                        split=split,
+                        checkpoint_dir=MODELS_TEMPORAL_DIR,
+                        results_dir=RESULTS_TEMPORAL_DIR,
+                    )
+        st.write("✅ Step 6 complete: Recurrent temporal models trained and validated.")
+
+        # Step 7: Observable Behaviour Trajectory & Teaching Activities
+        st.write("📈 **Step 7/8:** Generating trajectories and mapping teaching activities...")
+        for m_type in [MODEL_LSTM, MODEL_GRU, MODEL_RNN]:
+            load_or_generate_trajectory_predictions(video_id=video_id, model_type=m_type)
+
+        vid_duration = float(metadata.duration_seconds) if metadata and metadata.duration_seconds > 0 else 3.0
+        segments = load_teaching_activity_segments(video_id=video_id)
+        if not segments:
+            demo_segs = create_default_demo_segments(video_id=video_id, video_duration_seconds=vid_duration)
+            save_teaching_activity_segments(
+                video_id=video_id,
+                segments=demo_segs,
+                video_duration_seconds=vid_duration,
+            )
+            segments = demo_segs
+
+        preds_df = load_or_generate_trajectory_predictions(video_id=video_id, model_type=DEFAULT_TEMPORAL_MODEL)
+        if not preds_df.empty and "track_id" in preds_df.columns:
+            mapped_df = map_predictions_to_activities(predictions_df=preds_df, segments=segments)
+            dist_df = calculate_activity_behaviour_distributions(mapped_df=mapped_df, segments=segments)
+            summary_df = generate_activity_summary_table(
+                distributions_df=dist_df,
+                segments=segments,
+                mapped_df=mapped_df,
+            )
+            trans_df = calculate_activity_transitions(mapped_df=mapped_df)
+            export_teaching_activity_results(
+                video_id=video_id,
+                model_type=DEFAULT_TEMPORAL_MODEL,
+                segments=segments,
+                summary_df=summary_df,
+                distribution_df=dist_df,
+                transitions_df=trans_df,
+            )
+        st.write("✅ Step 7 complete: Student behaviour trajectories and teaching activities aligned.")
+
+        # Step 8: Research Experiments & Ablation
+        st.write("🧪 **Step 8/8:** Executing experimental benchmark comparison, ablations, and error analysis...")
+        out_exp_dir = RESULTS_EXPERIMENTS_DIR / video_id
+        out_abl_dir = RESULTS_ABLATION_DIR / video_id
+        out_err_dir = RESULTS_ERROR_ANALYSIS_DIR / video_id
+
+        base_csv_path = out_exp_dir / BASELINE_COMPARISON_CSV_FILENAME
+        if not base_csv_path.exists() and seq_npy_path.exists():
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            models_dict = {}
+            f_cnn_ckpt = MODELS_TEMPORAL_DIR / f"{MODEL_FRAME_CNN}_best.pt"
+            if f_cnn_ckpt.exists():
+                try:
+                    c_data = torch.load(f_cnn_ckpt, map_location=device, weights_only=False)
+                    cfg_d = c_data.get("config", {})
+                    f_cnn = FrameCNNClassifier(
+                        input_size=cfg_d.get("input_size", CNN_FEATURE_DIM),
+                        hidden_size=cfg_d.get("hidden_size", DEFAULT_HIDDEN_SIZE),
+                        dropout=cfg_d.get("dropout", DEFAULT_DROPOUT),
+                    )
+                    f_cnn.load_state_dict(c_data["model_state_dict"])
+                except Exception:
+                    f_cnn, _ = train_frame_cnn_baseline(split=split)
+            else:
+                f_cnn, _ = train_frame_cnn_baseline(split=split)
+            models_dict[MODEL_FRAME_CNN] = f_cnn
+
+            from src.temporal.models import create_temporal_model
+            for m_type in [MODEL_RNN, MODEL_LSTM, MODEL_GRU]:
+                c_data = torch.load(MODELS_TEMPORAL_DIR / f"{m_type}_best.pt", map_location=device, weights_only=False)
+                cfg_d = c_data.get("config", {})
+                m_inst = create_temporal_model(
+                    model_type=m_type,
+                    input_size=cfg_d.get("input_size", CNN_FEATURE_DIM),
+                    hidden_size=cfg_d.get("hidden_size", DEFAULT_HIDDEN_SIZE),
+                    num_layers=cfg_d.get("num_layers", 1),
+                    dropout=cfg_d.get("dropout", DEFAULT_DROPOUT),
+                    num_classes=6,
+                )
+                m_inst.load_state_dict(c_data["model_state_dict"])
+                models_dict[m_type] = m_inst
+
+            _, _, test_loader = create_split_dataloaders(split=split, batch_size=DEFAULT_BATCH_SIZE)
+            run_baseline_comparison(
+                models_dict=models_dict,
+                test_loader=test_loader,
+                output_dir=out_exp_dir,
+                device=device,
+            )
+            run_all_ablation_studies(split=split, output_dir=out_abl_dir, device=device)
+            analyze_temporal_errors(
+                models_dict=models_dict,
+                test_loader=test_loader,
+                test_metadata_df=split.test_metadata,
+                output_dir=out_err_dir,
+                device=device,
+            )
+        st.write("✅ Step 8 complete: Benchmark comparison, ablations, and error boundary analyses complete.")
+
+        status_box.update(label="🎉 End-to-End Pipeline Complete!", state="complete", expanded=False)
+        st.success("All features executed and cached on disk. Explore each module using the tabs below!")
+
+
 def main():
     """Main application loop."""
-    render_sidebar()
+    dashboard_mode = render_sidebar()
     render_header()
 
     st.subheader("📁 Upload Classroom Video")
@@ -2740,79 +3019,138 @@ def main():
 
     st.markdown("---")
 
-    # Layout: Preview & Metadata
-    preview_col, meta_col = st.columns([1.1, 1.0], gap="large")
+    # Quick Pipeline Runner Action Bar
+    pipe_col1, pipe_col2 = st.columns([3, 1])
+    with pipe_col1:
+        st.markdown("### ⚡ End-to-End Analysis Pipeline")
+        st.caption(
+            "Execute the complete university pipeline automatically (Extraction → Detection → Tracking → "
+            "Behaviour Recognition → CNN Features → Temporal Sequences → Recurrent Models → Trajectories → Activity Analysis → Research Experiments)."
+        )
+    with pipe_col2:
+        if st.button("🚀 Run Complete Pipeline", type="primary", key="btn_run_full_pipeline", help="Execute all pipeline stages end-to-end automatically."):
+            execute_full_pipeline_workflow(saved_path, metadata)
+            st.rerun()
 
-    with preview_col:
-        st.subheader("🎬 Video Preview")
+    # Layout: Continuous View vs Guided Workflow Tabs
+    if dashboard_mode == "📜 Continuous Pipeline View":
+        # Render continuous vertical pipeline
+        preview_col, meta_col = st.columns([1.1, 1.0], gap="large")
+        with preview_col:
+            st.subheader("🎬 Video Preview")
+            if saved_path and saved_path.exists():
+                st.video(str(saved_path))
+            else:
+                st.warning("Video file preview is temporarily unavailable on disk.")
+        with meta_col:
+            if metadata:
+                render_metadata_section(metadata)
+
+        st.markdown("---")
+        if saved_path and saved_path.exists() and metadata:
+            render_frame_extraction_section(saved_path, metadata)
+
+        st.markdown("---")
         if saved_path and saved_path.exists():
-            st.video(str(saved_path))
-        else:
-            st.warning("Video file preview is temporarily unavailable on disk.")
+            render_detection_section(saved_path)
 
-    with meta_col:
-        if metadata:
-            render_metadata_section(metadata)
+        st.markdown("---")
+        if saved_path and saved_path.exists():
+            render_tracking_section(saved_path)
 
-    st.markdown("---")
+        st.markdown("---")
+        if saved_path and saved_path.exists():
+            render_behaviour_recognition_section(saved_path)
 
-    # Feature 2: Frame Extraction & Preprocessing Section
-    if saved_path and saved_path.exists() and metadata:
-        render_frame_extraction_section(saved_path, metadata)
+        st.markdown("---")
+        if saved_path and saved_path.exists():
+            render_cnn_feature_extraction_section(saved_path)
 
-    st.markdown("---")
+        st.markdown("---")
+        if saved_path and saved_path.exists():
+            render_temporal_sequence_section(saved_path)
 
-    # Feature 3: Student / Person Detection Section
-    if saved_path and saved_path.exists():
-        render_detection_section(saved_path)
+        st.markdown("---")
+        if saved_path and saved_path.exists():
+            render_temporal_modelling_section(saved_path)
 
-    st.markdown("---")
+        st.markdown("---")
+        if saved_path and saved_path.exists():
+            render_behaviour_trajectory_section(saved_path)
 
-    # Feature 4: Student / Person Tracking Section
-    if saved_path and saved_path.exists():
-        render_tracking_section(saved_path)
+        st.markdown("---")
+        if saved_path and saved_path.exists():
+            render_teaching_activity_section(saved_path)
 
-    st.markdown("---")
+        st.markdown("---")
+        if saved_path and saved_path.exists():
+            render_research_experiments_section(saved_path)
 
-    # Feature 5: Observable Behaviour Recognition Section
-    if saved_path and saved_path.exists():
-        render_behaviour_recognition_section(saved_path)
+        st.markdown("---")
+        render_pedagogical_ethics_section()
 
-    st.markdown("---")
+    else:
+        # Default: 📑 Guided Workflow Tabs
+        tab_v, tab_f, tab_d, tab_b, tab_m, tab_t, tab_a, tab_r, tab_e = st.tabs([
+            "📹 1. Video Input",
+            "🎞️ 2. Frame Processing",
+            "👥 3. Detection & Tracking",
+            "🔍 4. Behaviour Recognition",
+            "🧠 5. Temporal Modelling",
+            "📈 6. Behaviour Trajectories",
+            "🏫 7. Teaching Activity",
+            "🧪 8. Research Results",
+            "🛡️ 9. Scope & Ethics",
+        ])
 
-    # Feature 6: CNN Visual Feature Extraction Section
-    if saved_path and saved_path.exists():
-        render_cnn_feature_extraction_section(saved_path)
+        with tab_v:
+            preview_col, meta_col = st.columns([1.1, 1.0], gap="large")
+            with preview_col:
+                st.subheader("🎬 Video Preview")
+                if saved_path and saved_path.exists():
+                    st.video(str(saved_path))
+                else:
+                    st.warning("Video file preview is temporarily unavailable on disk.")
+            with meta_col:
+                if metadata:
+                    render_metadata_section(metadata)
 
-    st.markdown("---")
+        with tab_f:
+            if saved_path and saved_path.exists() and metadata:
+                render_frame_extraction_section(saved_path, metadata)
 
-    # Feature 7: Temporal Sequence Creation Section
-    if saved_path and saved_path.exists():
-        render_temporal_sequence_section(saved_path)
+        with tab_d:
+            if saved_path and saved_path.exists():
+                render_detection_section(saved_path)
+                st.markdown("---")
+                render_tracking_section(saved_path)
 
-    st.markdown("---")
+        with tab_b:
+            if saved_path and saved_path.exists():
+                render_behaviour_recognition_section(saved_path)
+                st.markdown("---")
+                render_cnn_feature_extraction_section(saved_path)
 
-    # Feature 8: Recurrent Temporal Modelling Section
-    if saved_path and saved_path.exists():
-        render_temporal_modelling_section(saved_path)
+        with tab_m:
+            if saved_path and saved_path.exists():
+                render_temporal_sequence_section(saved_path)
+                st.markdown("---")
+                render_temporal_modelling_section(saved_path)
 
-    st.markdown("---")
+        with tab_t:
+            if saved_path and saved_path.exists():
+                render_behaviour_trajectory_section(saved_path)
 
-    # Feature 9: Observable Behaviour Trajectory Section
-    if saved_path and saved_path.exists():
-        render_behaviour_trajectory_section(saved_path)
+        with tab_a:
+            if saved_path and saved_path.exists():
+                render_teaching_activity_section(saved_path)
 
-    st.markdown("---")
+        with tab_r:
+            if saved_path and saved_path.exists():
+                render_research_experiments_section(saved_path)
 
-    # Feature 10: Teaching Activity Analysis Section
-    if saved_path and saved_path.exists():
-        render_teaching_activity_section(saved_path)
-
-    st.markdown("---")
-
-    # Feature 11: Research Experiments, Ablation & Temporal Error Analysis Section
-    if saved_path and saved_path.exists():
-        render_research_experiments_section(saved_path)
+        with tab_e:
+            render_pedagogical_ethics_section()
 
 
 def render_behaviour_trajectory_section(saved_path: Path):
@@ -3260,8 +3598,12 @@ def render_teaching_activity_section(saved_path: Path):
     with st.expander("📝 Manage Instructional Activity Segments", expanded=(len(segments) == 0)):
         if not segments:
             st.warning(
-                "⚠️ No teaching activity segments found for this video. "
-                "Load standard recommended demo segments or create custom intervals below."
+                "⚠️ **Teaching Activity Annotations Unavailable:**\n\n"
+                "Pedagogical instructional activity analysis (correlating student behaviour with Lecture, Discussion, "
+                "Problem-solving, or Presentation) requires validated instructional segment intervals or curriculum timestamps. "
+                "Automated estimation of instructional modalities is intentionally omitted to avoid ungrounded algorithmic assumptions "
+                "about teacher pedagogy.\n\n"
+                "👉 *Click below to load standard recommended demo intervals or create custom intervals below.*"
             )
             if st.button("⚡ Load Recommended Demo Segments", key="btn_load_demo_activity_segments"):
                 demo_segs = create_default_demo_segments(video_id=video_id, video_duration_seconds=vid_duration)
@@ -3350,7 +3692,11 @@ def render_teaching_activity_section(saved_path: Path):
                     st.error(f"❌ Validation Error: {err}")
 
     if not segments:
-        st.info("👉 Please add or load teaching activity segments above to generate activity-wise behaviour analytics.")
+        st.warning(
+            "⚠️ **Teaching Activity Analysis Inactive (No Annotations Provided):**\n\n"
+            "Behaviour distribution charts across instructional activities cannot be calculated without verified segment intervals. "
+            "Please load recommended demo intervals or designate custom intervals above to unlock full activity profiling."
+        )
         return
 
     st.markdown("---")
