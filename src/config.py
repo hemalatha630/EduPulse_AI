@@ -112,6 +112,19 @@ TARGET_TEACHING_ACTIVITIES = [
     ACTIVITY_PRESENTATION,
 ]
 
+# Feature 11 Configuration: Research Experiments, Ablation & Temporal Error Analysis
+RESULTS_EXPERIMENTS_DIR = RESULTS_DIR / "experiments"
+RESULTS_ABLATION_DIR = RESULTS_DIR / "ablation"
+RESULTS_ERROR_ANALYSIS_DIR = RESULTS_DIR / "error_analysis"
+
+MODEL_FRAME_CNN = "frame_cnn"
+ALL_COMPARISON_MODELS = [MODEL_FRAME_CNN, MODEL_RNN, MODEL_LSTM, MODEL_GRU]
+
+BASELINE_COMPARISON_CSV_FILENAME = "baseline_comparison.csv"
+PER_CLASS_METRICS_CSV_FILENAME = "per_class_metrics.csv"
+ABLATION_SUMMARY_CSV_FILENAME = "ablation_summary.csv"
+TEMPORAL_ERROR_ANALYSIS_CSV_FILENAME = "temporal_error_records.csv"
+
 # High-contrast color palette for teaching activities (RGB tuples & Hex strings)
 ACTIVITY_COLORS = {
     ACTIVITY_LECTURE: {"rgb": (41, 128, 185), "hex": "#2980B9"},        # Deep Blue
@@ -168,5 +181,8 @@ def ensure_directories() -> None:
         RESULTS_TEMPORAL_DIR,
         RESULTS_TRAJECTORIES_DIR,
         RESULTS_ACTIVITY_DIR,
+        RESULTS_EXPERIMENTS_DIR,
+        RESULTS_ABLATION_DIR,
+        RESULTS_ERROR_ANALYSIS_DIR,
     ]:
         directory.mkdir(parents=True, exist_ok=True)
