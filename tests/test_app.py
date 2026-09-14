@@ -282,3 +282,43 @@ def test_app_temporal_modelling_workflow():
     assert train_btn is not None
 
 
+def test_app_behaviour_trajectory_workflow():
+    """Verify Feature 9 observable behaviour trajectory UI workflow end-to-end."""
+    candidates = [
+        ROOT_DIR / "scratch" / "sample_media" / "classroom_lecture_demo.mp4",
+        ROOT_DIR / "data" / "videos" / "classroom_lecture_demo.mp4",
+    ]
+    demo_video = next((p for p in candidates if p.exists()), None)
+    if not demo_video:
+        pytest.skip("classroom_lecture_demo.mp4 required for full behaviour trajectory UI test")
+
+    video_bytes = demo_video.read_bytes()
+    at = AppTest.from_file(APP_FILE, default_timeout=120).run()
+    at.file_uploader[0].upload(filename="classroom_lecture_demo.mp4", content=video_bytes).run()
+    assert not at.exception
+
+    # Verify Feature 9 header is present
+    headers = [h.value for h in at.header]
+    assert any("Observable Behaviour Trajectory" in h for h in headers)
+
+    # Verify trajectory subheaders are rendered
+    subheaders = [s.value for s in at.subheader]
+    assert any("Individual Student Trajectory Analysis" in s for s in subheaders)
+    assert any("Categorical Behaviour Timeline" in s for s in subheaders)
+    assert any("Behaviour Durations & Share" in s for s in subheaders)
+    assert any("Observable Transitions" in s for s in subheaders)
+    assert any("Multi-Model Comparison & Classroom Overview" in s for s in subheaders)
+    assert any("Export Behaviour Trajectories" in s for s in subheaders)
+
+    # Verify trajectory metrics rendered
+    metric_labels = [m.label for m in at.metric]
+    assert "Observation Window" in metric_labels
+    assert "Observed Duration" in metric_labels
+    assert "Behaviours Observed" in metric_labels
+    assert "Transitions" in metric_labels
+
+    # Verify download button is present
+    download_btn = next((b for b in at.download_button if "Download Consolidated Behaviour Trajectories CSV" in b.label), None)
+    assert download_btn is not None
+
+
