@@ -90,6 +90,8 @@ DEFAULT_VAL_RATIO = 0.15
 DEFAULT_TEST_RATIO = 0.15
 DEFAULT_RANDOM_SEED = 42
 PREDICTIONS_CSV_FILENAME = "predictions.csv"
+RESULTS_TRAJECTORIES_DIR = RESULTS_DIR / "trajectories"
+TRAJECTORIES_CSV_FILENAME = "behaviour_trajectories.csv"
 
 # Project Metadata
 PROJECT_TITLE = "Temporal Learning-Engagement Profiling from Classroom Videos"
@@ -137,5 +139,6 @@ def ensure_directories() -> None:
         MODELS_DIR,
         MODELS_TEMPORAL_DIR,
         RESULTS_TEMPORAL_DIR,
+        RESULTS_TRAJECTORIES_DIR,
     ]:
         directory.mkdir(parents=True, exist_ok=True)

@@ -15,6 +15,7 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 import cv2
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -63,6 +64,7 @@ from src.config import (
     DEFAULT_SAMPLING_INTERVAL,
     DEFAULT_SEQUENCE_LENGTH,
     DEFAULT_SEQUENCE_STRIDE,
+    DEFAULT_TEMPORAL_MODEL,
     DEFAULT_TRACKER,
     DEFAULT_TRACKING_CONF_THRESHOLD,
     DEFAULT_YOLO_MODEL,
@@ -76,6 +78,7 @@ from src.config import (
     PROCESSED_DIR,
     PROJECT_TITLE,
     RESULTS_TEMPORAL_DIR,
+    RESULTS_TRAJECTORIES_DIR,
     SUPPORTED_CNN_MODELS,
     SUPPORTED_EXTENSIONS,
     SUPPORTED_TEMPORAL_MODELS,
@@ -84,9 +87,30 @@ from src.config import (
     TEMPORAL_SEQUENCES_METADATA_FILENAME,
     TEMPORAL_SEQUENCES_NPY_FILENAME,
     TRACKS_CSV_FILENAME,
+    TRAJECTORIES_CSV_FILENAME,
     UNKNOWN_BEHAVIOUR,
     VIDEOS_DIR,
     ensure_directories,
+)
+from src.trajectory import (
+    BehaviourSegment,
+    BehaviourTransition,
+    TrackingGap,
+    TrackTrajectorySummary,
+    calculate_behaviour_durations_and_distribution,
+    calculate_behaviour_transitions,
+    create_categorical_timeline_figure,
+    create_classroom_overview_figure,
+    create_duration_distribution_figure,
+    create_model_comparison_timeline_figure,
+    create_transitions_figure,
+    detect_tracking_gaps,
+    export_behaviour_trajectories_csv,
+    extract_track_trajectory,
+    format_timestamp_mmss,
+    generate_track_summary,
+    load_or_generate_trajectory_predictions,
+    merge_behaviour_segments,
 )
 from src.temporal import (
     ClassroomSequenceDataset,
@@ -219,8 +243,9 @@ def render_sidebar():
         st.success("✅ **Feature 5: Observable Behaviour Recognition**")
         st.success("✅ **Feature 6: CNN Visual Feature Extraction**")
         st.success("✅ **Feature 7: Temporal Sequence Creation**")
-        st.success("🚀 **Feature 8: Temporal Modelling (RNN / LSTM / GRU)**")
-        st.caption("Next stages (Feature 9: Temporal Engagement Aggregation) unlock in future milestones.")
+        st.success("✅ **Feature 8: Temporal Modelling (RNN / LSTM / GRU)**")
+        st.success("🚀 **Feature 9: Observable Behaviour Trajectory**")
+        st.caption("Next stages (Feature 10: Teaching Activity Analysis) unlock in future milestones.")
 
 
 def render_header():
@@ -2710,6 +2735,390 @@ def main():
     # Feature 8: Recurrent Temporal Modelling Section
     if saved_path and saved_path.exists():
         render_temporal_modelling_section(saved_path)
+
+    st.markdown("---")
+
+    # Feature 9: Observable Behaviour Trajectory Section
+    if saved_path and saved_path.exists():
+        render_behaviour_trajectory_section(saved_path)
+
+
+def render_behaviour_trajectory_section(saved_path: Path):
+    """Render Feature 9: Observable Behaviour Trajectory Analysis and Visualizations."""
+    st.header("📈 Observable Behaviour Trajectory")
+    st.caption(
+        "Visualizing how observable learning-related behaviours change over time for anonymous "
+        "tracked individuals across the classroom video using trained recurrent temporal models."
+    )
+
+    video_id = derive_video_id(saved_path.name)
+    processed_dir = PROCESSED_DIR / video_id
+    seq_npy_path = processed_dir / TEMPORAL_SEQUENCES_NPY_FILENAME
+    seq_meta_path = processed_dir / TEMPORAL_SEQUENCES_METADATA_FILENAME
+
+    # Academic & Ethical Research Notice
+    with st.expander("ℹ️ Observable Scope & Pedagogical Foundations", expanded=False):
+        st.markdown(
+            """
+            **Empirical Trajectory Principles:**
+            - **Strictly Observable Behaviours**: Trajectories chart physical, visually observable actions (e.g. looking toward instruction, reading/writing, peer interaction).
+            - **No Mental or Emotional Inferences**: In accordance with rigorous scientific standards, this system does **not** estimate internal cognitive states, attention scores, boredom, or motivation.
+            - **Discrete Categorical Transitions**: Observable behaviours represent discrete categorical states. They are plotted as Gantt-style timeline bands, not continuous numerical values.
+            - **Anonymous Tracking**: Visualized trajectories correspond strictly to anonymous numeric Track IDs.
+            """
+        )
+
+    # Check prerequisites: Feature 7 temporal sequences
+    if not (seq_npy_path.exists() and seq_meta_path.exists()):
+        st.info(
+            "👉 Please complete **Feature 7: Temporal Sequence Creation** and **Feature 8: Temporal Modelling** "
+            "above before generating behaviour trajectories."
+        )
+        return
+
+    # Check Feature 8 model checkpoints
+    available_models = []
+    for m in SUPPORTED_TEMPORAL_MODELS:
+        if (MODELS_TEMPORAL_DIR / f"{m}_best.pt").exists():
+            available_models.append(m)
+
+    if not available_models:
+        st.warning(
+            "⚠️ No trained recurrent model checkpoints found in `models/temporal/`. "
+            "Please train at least one recurrent architecture (LSTM, GRU, or RNN) in Feature 8 above."
+        )
+        return
+
+    # Model selector and load
+    st.subheader("⚙️ Trajectory Inference & Model Selection")
+    t_col1, t_col2 = st.columns([1, 2])
+    with t_col1:
+        default_idx = (
+            available_models.index(DEFAULT_TEMPORAL_MODEL)
+            if DEFAULT_TEMPORAL_MODEL in available_models
+            else 0
+        )
+        selected_model = st.selectbox(
+            "Select Recurrent Model for Trajectory Inference",
+            options=available_models,
+            index=default_idx,
+            format_func=lambda m: f"{m.upper()} Model",
+            key="traj_selected_model",
+            help="Choose which trained recurrent model generates the chronological behaviour predictions.",
+        )
+
+    with t_col2:
+        st.info(
+            f"Active Model: **{selected_model.upper()}** | Checkpoint: `models/temporal/{selected_model}_best.pt`\n"
+            "Zero retraining: predictions are generated directly from saved weights or loaded from disk cache."
+        )
+
+    # Load / generate predictions
+    try:
+        with st.spinner(f"Loading sequence predictions for {selected_model.upper()} model..."):
+            predictions_df = load_or_generate_trajectory_predictions(
+                video_id=video_id,
+                model_type=selected_model,
+            )
+    except Exception as exc:
+        st.error(f"❌ Error generating trajectory predictions: {exc}")
+        return
+
+    if predictions_df.empty or "track_id" not in predictions_df.columns:
+        st.warning("⚠️ No valid sequence predictions could be loaded for this video.")
+        return
+
+    # Unique tracks available in predictions
+    unique_tracks = sorted(predictions_df["track_id"].unique())
+    if not unique_tracks:
+        st.warning("⚠️ No tracked individuals found in predictions.")
+        return
+
+    st.markdown("---")
+    st.subheader("🎯 Individual Student Trajectory Analysis")
+
+    # Interactive Controls: Track Selection & Time Range
+    c_col1, c_col2 = st.columns([1.2, 1.8], gap="medium")
+
+    # Calculate overall video time range from predictions
+    min_vid_time = float(predictions_df["start_timestamp_seconds"].min())
+    max_vid_time = float(predictions_df["end_timestamp_seconds"].max())
+    if max_vid_time <= min_vid_time:
+        max_vid_time = min_vid_time + 1.0
+
+    with c_col1:
+        def track_label_formatter(tid: int) -> str:
+            track_subset = predictions_df[predictions_df["track_id"] == tid]
+            count = len(track_subset)
+            t_min = track_subset["start_timestamp_seconds"].min()
+            t_max = track_subset["end_timestamp_seconds"].max()
+            return f"Track ID #{tid} ({count} sequences | {format_timestamp_mmss(t_min)} - {format_timestamp_mmss(t_max)})"
+
+        selected_track_id = st.selectbox(
+            "Select Anonymous Track ID",
+            options=unique_tracks,
+            index=0,
+            format_func=track_label_formatter,
+            key="traj_selected_track_id",
+            help="Select an anonymous tracked student to view their individual chronological behaviour trajectory.",
+        )
+
+    with c_col2:
+        # Time range filter
+        track_full_df = predictions_df[predictions_df["track_id"] == selected_track_id]
+        t_min_track = float(track_full_df["start_timestamp_seconds"].min())
+        t_max_track = float(track_full_df["end_timestamp_seconds"].max())
+
+        time_range = st.slider(
+            "Filter Observation Window (Seconds)",
+            min_value=0.0,
+            max_value=float(math.ceil(max_vid_time)),
+            value=(max(0.0, float(math.floor(t_min_track))), float(math.ceil(t_max_track))),
+            step=0.5,
+            format="%.1fs",
+            key="traj_time_range_slider",
+            help="Adjust the time window to inspect behaviour over a specific portion of the video.",
+        )
+
+    # Extract trajectory for selected track and time range
+    track_traj_df = extract_track_trajectory(
+        predictions_df,
+        track_id=selected_track_id,
+        time_range=(time_range[0], time_range[1]),
+    )
+
+    if track_traj_df.empty:
+        st.warning(
+            f"⚠️ No observations for Track #{selected_track_id} within time window "
+            f"[{time_range[0]:.1f}s - {time_range[1]:.1f}s]. Expand the slider to include tracked sequences."
+        )
+        return
+
+    # Compute trajectory components
+    gaps = detect_tracking_gaps(track_traj_df, max_allowed_gap_seconds=1.0)
+    segments = merge_behaviour_segments(track_traj_df, max_gap_tolerance_seconds=1.0)
+    transitions = calculate_behaviour_transitions(segments)
+    dur_df, durations_dict, percentages_dict = calculate_behaviour_durations_and_distribution(segments)
+    summary = generate_track_summary(
+        track_id=selected_track_id,
+        model_type=selected_model,
+        track_df=track_traj_df,
+        segments=segments,
+        transitions=transitions,
+        gaps=gaps,
+    )
+    observed_pct_video = (summary.total_observed_duration_seconds / max_vid_time * 100.0) if max_vid_time > 0 else 0.0
+
+    # Metrics Summary Row
+    m1, m2, m3, m4, m5 = st.columns(5)
+    with m1:
+        st.metric(
+            label="Observation Window",
+            value=f"{summary.start_time_formatted} → {summary.end_time_formatted}",
+        )
+    with m2:
+        st.metric(
+            label="Observed Duration",
+            value=f"{summary.total_observed_seconds:.1f}s",
+            delta=f"{observed_pct_video:.1f}% of video",
+        )
+    with m3:
+        st.metric(
+            label="Behaviours Observed",
+            value=f"{summary.distinct_behaviours_observed}",
+        )
+    with m4:
+        st.metric(
+            label="Transitions",
+            value=f"{summary.transition_count}",
+        )
+    with m5:
+        st.metric(
+            label="Tracking Gaps",
+            value=f"{len(gaps)}",
+        )
+
+    st.markdown("---")
+
+    # Primary Categorical Timeline Visualization
+    st.subheader("📊 Categorical Behaviour Timeline")
+    st.caption(
+        "Gantt-style horizontal categorical timeline showing continuous behaviour segments and tracking gaps (hatched). "
+        "Observable behaviours are discrete actions, not continuous quantities."
+    )
+    timeline_fig = create_categorical_timeline_figure(
+        segments=segments,
+        gaps=gaps,
+        track_id=selected_track_id,
+        model_name=selected_model,
+        time_range=time_range,
+    )
+    st.pyplot(timeline_fig, use_container_width=True)
+    plt.close(timeline_fig)
+
+    # Breakdown of continuous segments
+    with st.expander("📋 Continuous Behaviour Segments Breakdown", expanded=False):
+        seg_records = []
+        for s in segments:
+            seg_records.append(
+                {
+                    "Segment ID": s.segment_id,
+                    "Start Time": s.start_time_formatted,
+                    "End Time": s.end_time_formatted,
+                    "Duration (s)": f"{s.duration_seconds:.2f}",
+                    "Observable Behaviour": s.behaviour_class,
+                    "Sequences": s.sequence_count,
+                    "Mean Confidence": f"{s.mean_confidence:.2%}",
+                }
+            )
+        st.dataframe(pd.DataFrame(seg_records), use_container_width=True, hide_index=True)
+
+    st.markdown("---")
+
+    # Durations Distribution and Transitions (2 Columns)
+    col_dur, col_trans = st.columns(2, gap="large")
+
+    with col_dur:
+        st.subheader("⏱️ Behaviour Durations & Share")
+        st.caption("Observed duration (seconds) and percentage of total observed time for this track.")
+        dur_fig = create_duration_distribution_figure(
+            durations_dict=durations_dict,
+            percentages_dict=percentages_dict,
+            track_id=selected_track_id,
+        )
+        st.pyplot(dur_fig, use_container_width=True)
+        plt.close(dur_fig)
+
+        dur_rows = [
+            {
+                "Observable Behaviour": cls,
+                "Duration (s)": f"{sec:.2f}",
+                "Share (%)": f"{percentages_dict.get(cls, 0.0):.1f}%",
+            }
+            for cls, sec in sorted(durations_dict.items(), key=lambda x: x[1], reverse=True)
+        ]
+        st.dataframe(pd.DataFrame(dur_rows), use_container_width=True, hide_index=True)
+
+    with col_trans:
+        st.subheader("🔄 Observable Transitions")
+        st.caption("Chronological shifts between consecutive observable behaviours.")
+        trans_fig = create_transitions_figure(
+            transitions=transitions,
+            track_id=selected_track_id,
+        )
+        st.pyplot(trans_fig, use_container_width=True)
+        plt.close(trans_fig)
+
+        if transitions:
+            trans_rows = [
+                {
+                    "From Behaviour": t.from_behaviour,
+                    "To Behaviour": t.to_behaviour,
+                    "Count": t.count,
+                    "First Occurrence": format_timestamp_mmss(t.transition_timestamps[0]) if t.transition_timestamps else "N/A",
+                }
+                for t in transitions
+            ]
+            st.dataframe(pd.DataFrame(trans_rows), use_container_width=True, hide_index=True)
+        else:
+            st.info("No transitions observed: Track maintained a single observable behaviour throughout this window.")
+
+    # Tracking gaps details if present
+    if gaps:
+        with st.expander(f"⚠️ Tracking Gaps Detected ({len(gaps)})", expanded=False):
+            st.caption(
+                "Tracking gaps occur when a student is momentarily occluded or lost by the tracker. "
+                "The trajectory extraction preserves these gaps as distinct discontinuous intervals."
+            )
+            gap_records = [
+                {
+                    "Gap ID": g.gap_id,
+                    "Start Time": g.start_time_formatted,
+                    "End Time": g.end_time_formatted,
+                    "Duration (s)": f"{g.duration_seconds:.2f}",
+                }
+                for g in gaps
+            ]
+            st.dataframe(pd.DataFrame(gap_records), use_container_width=True, hide_index=True)
+
+    st.markdown("---")
+
+    # Multi-Model Comparison Expander
+    st.subheader("🔬 Multi-Model Comparison & Classroom Overview")
+
+    with st.expander("⚖️ Compare Recurrent Architectures (RNN vs LSTM vs GRU) for this Track", expanded=False):
+        st.caption("Inspect trajectory agreement and differences across all trained recurrent models side-by-side.")
+        model_segments = {}
+        for m in available_models:
+            try:
+                m_df = load_or_generate_trajectory_predictions(video_id=video_id, model_type=m)
+                m_track_df = extract_track_trajectory(m_df, track_id=selected_track_id, time_range=time_range)
+                if not m_track_df.empty:
+                    m_segs = merge_behaviour_segments(m_track_df)
+                    model_segments[m.upper()] = m_segs
+            except Exception:
+                pass
+
+        if model_segments:
+            comp_fig = create_model_comparison_timeline_figure(
+                model_segments=model_segments,
+                track_id=selected_track_id,
+                time_range=time_range,
+            )
+            st.pyplot(comp_fig, use_container_width=True)
+            plt.close(comp_fig)
+        else:
+            st.caption("Could not load multiple model predictions for comparison.")
+
+    # Classroom Multi-Track Overview Expander
+    with st.expander("🏫 Classroom Multi-Track Overview (All Active Students)", expanded=False):
+        st.caption(
+            "Stacked horizontal timelines showing observable behaviour trajectories for all detected students simultaneously."
+        )
+        multi_track_segments = {}
+        for tid in unique_tracks:
+            t_df = extract_track_trajectory(predictions_df, track_id=tid, time_range=time_range)
+            if not t_df.empty:
+                t_segs = merge_behaviour_segments(t_df)
+                if t_segs:
+                    multi_track_segments[tid] = t_segs
+
+        if multi_track_segments:
+            overview_fig = create_classroom_overview_figure(
+                multi_track_segments=multi_track_segments,
+                model_name=selected_model,
+                time_range=time_range,
+            )
+            st.pyplot(overview_fig, use_container_width=True)
+            plt.close(overview_fig)
+        else:
+            st.caption("No multi-track segments available for overview.")
+
+    st.markdown("---")
+
+    # Export & Download Section
+    st.subheader("📥 Export Behaviour Trajectories")
+    st.caption("Download the consolidated trajectory predictions with continuous segment boundaries to CSV.")
+
+    csv_out_path = RESULTS_TRAJECTORIES_DIR / video_id / TRAJECTORIES_CSV_FILENAME
+    export_behaviour_trajectories_csv(
+        video_id=video_id,
+        predictions_df=predictions_df,
+        output_csv_path=csv_out_path,
+    )
+
+    if csv_out_path.exists():
+        csv_bytes = csv_out_path.read_bytes()
+        st.download_button(
+            label="📥 Download Consolidated Behaviour Trajectories CSV",
+            data=csv_bytes,
+            file_name=f"{video_id}_{TRAJECTORIES_CSV_FILENAME}",
+            mime="text/csv",
+            help="Download full dataset of chronological behaviour predictions and segments for all tracks.",
+            key="btn_download_trajectories_csv",
+        )
+    else:
+        st.caption("Trajectory CSV export ready.")
 
 
 if __name__ == "__main__":
