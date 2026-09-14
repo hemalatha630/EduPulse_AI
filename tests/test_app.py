@@ -386,5 +386,85 @@ def test_app_research_experiments_workflow():
     assert any("Experimental Execution & Evaluation Controls" in s for s in subheaders)
 
 
+def test_app_final_dashboard_workflow():
+    """Verify Feature 12 final project dashboard: tabs, pipeline action bar, ethics section, and scope."""
+    candidates = [
+        ROOT_DIR / "scratch" / "sample_media" / "classroom_lecture_demo.mp4",
+        ROOT_DIR / "data" / "videos" / "classroom_lecture_demo.mp4",
+    ]
+    demo_video = next((p for p in candidates if p.exists()), None)
+    if not demo_video:
+        pytest.skip("classroom_lecture_demo.mp4 required for dashboard workflow test")
+
+    video_bytes = demo_video.read_bytes()
+    at = AppTest.from_file(APP_FILE, default_timeout=120).run()
+
+    # Verify sidebar contains Feature 12
+    success_text = [s.value for s in at.success]
+    assert any("Feature 12: Final Project Dashboard" in s for s in success_text)
+
+    # Verify radio selector for dashboard layout mode is present
+    radios = [r.value for r in at.radio]
+    assert any("Guided Workflow Tabs" in str(r) for r in radios)
+
+    # Upload video
+    at.file_uploader[0].upload(filename="classroom_lecture_demo.mp4", content=video_bytes).run()
+    assert not at.exception
+
+    # Verify run complete pipeline button exists
+    buttons = [b.label for b in at.button]
+    assert any("Run Complete Pipeline" in b for b in buttons)
+
+    # Verify tabs exist
+    tabs = [t.label for t in at.tabs]
+    assert any("1. Video Input" in t for t in tabs)
+    assert any("2. Frame Processing" in t for t in tabs)
+    assert any("3. Detection & Tracking" in t for t in tabs)
+    assert any("4. Behaviour Recognition" in t for t in tabs)
+    assert any("5. Temporal Modelling" in t for t in tabs)
+    assert any("6. Behaviour Trajectories" in t for t in tabs)
+    assert any("7. Teaching Activity" in t for t in tabs)
+    assert any("8. Research Results" in t for t in tabs)
+    assert any("9. Scope & Ethics" in t for t in tabs)
+
+    # Verify Pedagogical Ethics section header
+    headers = [h.value for h in at.header]
+    assert any("Pedagogical Scope & Ethical Research Boundaries" in h for h in headers)
+
+    # Verify non-detectable state exclusions are displayed
+    warnings = [w.value for w in at.warning]
+    assert any("internal states are NEVER detected" in w for w in warnings)
+
+
+def test_app_dashboard_continuous_mode():
+    """Verify switching to Continuous Pipeline View mode renders sections vertically."""
+    candidates = [
+        ROOT_DIR / "scratch" / "sample_media" / "classroom_lecture_demo.mp4",
+        ROOT_DIR / "data" / "videos" / "classroom_lecture_demo.mp4",
+    ]
+    demo_video = next((p for p in candidates if p.exists()), None)
+    if not demo_video:
+        pytest.skip("classroom_lecture_demo.mp4 required for layout test")
+
+    video_bytes = demo_video.read_bytes()
+    at = AppTest.from_file(APP_FILE, default_timeout=120).run()
+
+    # Switch radio to continuous view
+    at.radio[0].set_value("📜 Continuous Pipeline View").run()
+    assert not at.exception
+
+    # Upload video
+    at.file_uploader[0].upload(filename="classroom_lecture_demo.mp4", content=video_bytes).run()
+    assert not at.exception
+
+    # In continuous mode, all stage headers are present
+    headers = [h.value for h in at.header]
+    assert any("Observable Behaviour Trajectory" in h for h in headers)
+    assert any("Teaching Activity Analysis" in h for h in headers)
+    assert any("Research Experiments, Ablation & Temporal Error Analysis" in h for h in headers)
+    assert any("Pedagogical Scope & Ethical Research Boundaries" in h for h in headers)
+
+
+
 
 
