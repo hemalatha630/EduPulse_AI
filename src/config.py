@@ -93,6 +93,33 @@ PREDICTIONS_CSV_FILENAME = "predictions.csv"
 RESULTS_TRAJECTORIES_DIR = RESULTS_DIR / "trajectories"
 TRAJECTORIES_CSV_FILENAME = "behaviour_trajectories.csv"
 
+# Feature 10 Configuration: Teaching Activity Analysis
+RESULTS_ACTIVITY_DIR = RESULTS_DIR / "teaching_activity"
+TEACHING_ACTIVITY_SEGMENTS_FILENAME = "teaching_activity_segments.csv"
+ACTIVITY_BEHAVIOUR_SUMMARY_FILENAME = "activity_behaviour_summary.csv"
+ACTIVITY_TRANSITION_SUMMARY_FILENAME = "activity_transition_summary.csv"
+
+# Canonical Teaching Activity Classes
+ACTIVITY_LECTURE = "Lecture"
+ACTIVITY_DISCUSSION = "Discussion"
+ACTIVITY_PROBLEM_SOLVING = "Problem-solving"
+ACTIVITY_PRESENTATION = "Presentation"
+
+TARGET_TEACHING_ACTIVITIES = [
+    ACTIVITY_LECTURE,
+    ACTIVITY_DISCUSSION,
+    ACTIVITY_PROBLEM_SOLVING,
+    ACTIVITY_PRESENTATION,
+]
+
+# High-contrast color palette for teaching activities (RGB tuples & Hex strings)
+ACTIVITY_COLORS = {
+    ACTIVITY_LECTURE: {"rgb": (41, 128, 185), "hex": "#2980B9"},        # Deep Blue
+    ACTIVITY_DISCUSSION: {"rgb": (39, 174, 96), "hex": "#27AE60"},      # Emerald Green
+    ACTIVITY_PROBLEM_SOLVING: {"rgb": (142, 68, 173), "hex": "#8E44AD"}, # Amethyst Purple
+    ACTIVITY_PRESENTATION: {"rgb": (211, 84, 0), "hex": "#D35400"},     # Rust Orange
+}
+
 # Project Metadata
 PROJECT_TITLE = "Temporal Learning-Engagement Profiling from Classroom Videos"
 PROJECT_SHORT_TITLE = "EduPulse AI"
@@ -140,5 +167,6 @@ def ensure_directories() -> None:
         MODELS_TEMPORAL_DIR,
         RESULTS_TEMPORAL_DIR,
         RESULTS_TRAJECTORIES_DIR,
+        RESULTS_ACTIVITY_DIR,
     ]:
         directory.mkdir(parents=True, exist_ok=True)

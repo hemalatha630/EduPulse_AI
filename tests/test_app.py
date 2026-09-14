@@ -322,3 +322,44 @@ def test_app_behaviour_trajectory_workflow():
     assert download_btn is not None
 
 
+def test_app_teaching_activity_workflow():
+    """Verify Feature 10 teaching activity analysis UI workflow end-to-end."""
+    candidates = [
+        ROOT_DIR / "scratch" / "sample_media" / "classroom_lecture_demo.mp4",
+        ROOT_DIR / "data" / "videos" / "classroom_lecture_demo.mp4",
+    ]
+    demo_video = next((p for p in candidates if p.exists()), None)
+    if not demo_video:
+        pytest.skip("classroom_lecture_demo.mp4 required for full teaching activity UI test")
+
+    video_bytes = demo_video.read_bytes()
+    at = AppTest.from_file(APP_FILE, default_timeout=120).run()
+    at.file_uploader[0].upload(filename="classroom_lecture_demo.mp4", content=video_bytes).run()
+    assert not at.exception
+
+    # Verify Feature 10 header is present
+    headers = [h.value for h in at.header]
+    assert any("Teaching Activity Analysis" in h for h in headers)
+
+    # If demo segments button is present, click it to initialize segments
+    demo_btn = next((b for b in at.button if "Load Recommended Demo Segments" in b.label), None)
+    if demo_btn is not None:
+        demo_btn.click().run()
+        assert not at.exception
+
+    # Verify teaching activity subheaders
+    subheaders = [s.value for s in at.subheader]
+    assert any("Teaching Activity Segments & Annotation Interface" in s for s in subheaders)
+    assert any("Trajectory Inference Model Selection" in s for s in subheaders)
+    assert any("Instructional Activity Timeline & Dominant Behaviours" in s for s in subheaders)
+    assert any("Activity Summary & Dominant Observable Behaviours" in s for s in subheaders)
+    assert any("Comparative Observable Behaviour Analytics" in s for s in subheaders)
+    assert any("Student Track-Level Activity Breakdown" in s for s in subheaders)
+    assert any("Export Teaching Activity Results" in s for s in subheaders)
+
+    # Verify download buttons exist for activity summaries
+    download_btn = next((b for b in at.download_button if "Download Activity Summary CSV" in b.label), None)
+    assert download_btn is not None
+
+
+

@@ -30,7 +30,7 @@ The system focuses exclusively on verifiable, observable physical behaviours rec
 
 ---
 
-## 2. Technology Stack (Features 1, 2, 3, 4, 5, 6 & 7)
+## 2. Technology Stack (Features 1 through 10)
 
 * **Programming Language:** Python 3.12+ (supports Python 3.11+)
 * **Web Application Framework:** Streamlit
@@ -39,12 +39,12 @@ The system focuses exclusively on verifiable, observable physical behaviours rec
 * **Multi-Object Tracking:** ByteTrack & BoT-SORT (Linear Assignment Problem solver `lap`)
 * **Pretrained CNN Visual Backbone:** PyTorch Torchvision ResNet18 (512-dim visual embeddings)
 * **Temporal Sequence Generation:** Sliding-window chunking, NumPy 3D arrays, PyTorch `torch.utils.data.Dataset` (`ClassroomSequenceDataset`) and `DataLoader` compatibility
+* **Recurrent Sequence Modelling:** PyTorch RNN, LSTM, and GRU temporal classifiers with track-grouped cross-entropy training
+* **Trajectory Profiling & Teaching Activity Analysis:** Continuous segment merging, transition calculation, activity distribution accounting, cross-tabulation heatmaps, and Gantt-style timeline visualizations
 * **Visualization & Plotting:** Matplotlib (`matplotlib`), Pillow (`Pillow`)
 * **Numerical Computing & SVD/PCA:** NumPy
 * **Data Structures & Processing:** Pandas
-* **Test Suite:** PyTest
-
-*(Future sequence modeling modules such as RNN/LSTM/GRU will be introduced in Feature 8).*
+* **Test Suite:** PyTest (153 automated tests, 100% pass rate)
 
 ---
 
@@ -53,7 +53,7 @@ The system focuses exclusively on verifiable, observable physical behaviours rec
 ```text
 EduPulse_AI/
 │
-├── app.py                              # Streamlit main application entry point (Features 1-7)
+├── app.py                              # Streamlit main application entry point (Features 1-10)
 │
 ├── data/                               # Data storage (git-ignored for student privacy)
 │   ├── videos/                         # Uploaded raw classroom videos
@@ -67,54 +67,57 @@ EduPulse_AI/
 │           ├── cnn_features.npy        # Feature 6 raw (N, 512) float32 feature array
 │           ├── cnn_features_metadata.csv # Feature 6 spatial-temporal metadata mapping
 │           ├── temporal_sequences.npy  # Feature 7 3D float32 sequence tensor (N, L, D)
-│           └── temporal_sequences_metadata.csv # Feature 7 sequence ledger & window mapping
+│           ├── temporal_sequences_metadata.csv # Feature 7 sequence ledger & window mapping
+│           └── teaching_activity_segments.csv  # Feature 10 validated instructional segment annotations
 │
 ├── models/                             # Model weights directory
-│   └── yolov8n.pt                      # Pretrained YOLOv8n detector (~6.2 MB)
+│   ├── yolov8n.pt                      # Pretrained YOLOv8n detector (~6.2 MB)
+│   └── temporal/                       # Feature 8 trained recurrent model checkpoints
+│       ├── rnn_best.pt                 # Trained Vanilla RNN weights
+│       ├── lstm_best.pt                # Trained LSTM weights
+│       └── gru_best.pt                 # Trained GRU weights
 │
 ├── notebooks/                          # Research & exploratory notebooks
 │
+├── results/                            # Experimental outputs and evaluation ledgers
+│   ├── temporal/                       # Feature 8 recurrent training histories and predictions
+│   ├── trajectories/                   # Feature 9 observable behaviour trajectories
+│   └── teaching_activity/              # Feature 10 teaching activity summaries & distributions (<video_id>/)
+│       └── <video_id>/
+│           ├── activity_behaviour_summary_<model>.csv
+│           ├── activity_behaviour_distributions_<model>.csv
+│           └── activity_transitions_<model>.csv
+│
 ├── src/                                # Modular source code
 │   ├── __init__.py
-│   ├── config.py                       # Central paths, sampling defaults, CNN & tracking configs
+│   ├── config.py                       # Central paths, sampling defaults, activity & colour palettes
 │   ├── video/                          # Video ingestion & frame extraction (Feature 1 & 2)
-│   │   ├── __init__.py
-│   │   ├── video_utils.py              # Video validation, metadata extraction, sanitization
-│   │   └── frame_extractor.py          # Chronological extraction, sampling, & metadata engine
 │   ├── preprocessing/                  # Image validation, color handling, & resizing
-│   │   ├── __init__.py
-│   │   └── frame_preprocessor.py       # FramePreprocessor utility class
 │   ├── detection/                      # Student / Person Detection (Feature 3)
-│   │   ├── __init__.py
-│   │   └── detector.py                 # YOLOPersonDetector & detection pipeline
 │   ├── tracking/                       # Student / Person Tracking (Feature 4)
-│   │   ├── __init__.py
-│   │   └── tracker.py                  # PersonTracker (ByteTrack/BoT-SORT), TrackResult, & trajectory engine
 │   ├── behaviour/                      # Observable behaviour classification (Feature 5)
-│   │   ├── __init__.py
-│   │   ├── behaviour_classifier.py     # BehaviourClassifier & batch recognition pipeline
-│   │   ├── behaviour_labels.py         # Canonical class constants, palette & descriptions
-│   │   └── preprocessing.py            # Person crop extraction, clipping & normalization
 │   ├── cnn/                            # CNN Visual Feature Extraction (Feature 6)
-│   │   ├── __init__.py
-│   │   ├── feature_extractor.py        # CNNFeatureExtractor (ResNet18 512D) & batch extraction
-│   │   └── visualization.py            # NumPy SVD 2D PCA projection & scatter plotting
-│   └── temporal/                       # Temporal sequence creation & modeling (Feature 7 & 8)
-│       ├── __init__.py
-│       ├── sequence_generator.py       # Sliding-window sequence creator & PyTorch Dataset
-│       └── visualization.py            # Sequence timeline & track coverage charts
+│   ├── temporal/                       # Temporal sequence creation & recurrent modeling (Feature 7 & 8)
+│   ├── trajectory/                     # Observable behaviour trajectory extraction (Feature 9)
+│   └── activity/                       # Teaching Activity Analysis & Distributions (Feature 10)
+│       ├── __init__.py                 # Public package export
+│       ├── activity_labels.py          # Canonical activity constants, descriptions, & colors
+│       ├── manager.py                  # TeachingActivitySegment dataclass, validation, & disk I/O
+│       ├── analyzer.py                 # Mapping, distribution calculation, summary, ties & transitions
+│       └── visualization.py            # Timelines, grouped bars, cross-tabulation heatmaps, & track charts
 │
-├── results/                            # Evaluation logs and ablation outputs (future)
-├── tests/                              # Automated unit and integration tests (98 tests)
-│   ├── __init__.py
-│   ├── test_app.py                     # Streamlit UI integration tests (Features 1-7)
+├── tests/                              # Automated unit and integration tests (153 tests)
+│   ├── test_app.py                     # Streamlit UI integration tests (Features 1-10)
 │   ├── test_video_utils.py             # Video validation unit tests
 │   ├── test_frame_extractor.py         # Frame extraction, sampling, & preprocessor tests
 │   ├── test_detector.py                # YOLO person detection & annotation unit tests
 │   ├── test_tracker.py                 # Multi-object tracking, ID consistency, & trajectory tests
 │   ├── test_behaviour.py               # Observable behaviour recognition unit tests
 │   ├── test_cnn.py                     # CNN ResNet18 loading, batch extraction, & PCA tests
-│   └── test_temporal.py                # Temporal sequence generation & PyTorch Dataset tests
+│   ├── test_temporal.py                # Temporal sequence generation & PyTorch Dataset tests
+│   ├── test_temporal_models.py         # Recurrent model training, evaluation, & inference tests
+│   ├── test_trajectory.py              # Observable behaviour trajectory extraction & visualization tests
+│   └── test_activity.py                # Feature 10 segment validation, distributions, & visualization tests
 │
 ├── requirements.txt                    # Core dependencies
 ├── .gitignore                          # Git ignore rules for video data & environment
@@ -755,15 +758,58 @@ Feature 9 is strictly an inference and diagnostic layer. It **never retrains** a
 
 ---
 
-## 15. Automated Testing
+---
 
-Run the complete PyTest suite covering video validation, preprocessing, frame sampling, person detection, multi-object tracking, observable behaviour recognition, CNN visual feature extraction, temporal sequence creation, recurrent sequence modelling, trajectory extraction, and Streamlit UI workflows:
+## 15. Feature 10 — Teaching Activity Analysis
+
+Feature 10 extends observable behaviour trajectory profiling into instructional context analysis. It answers the fundamental pedagogical research question: **How do observable learning-related student behaviours differ across different classroom teaching activities?**
+
+### Pedagogical Foundations & Strict Scientific Boundary
+* **Instructional Setting Description**: Teaching activity classification describes the *instructional structure* of the lesson (e.g., lecture, discussion, problem-solving, presentation).
+* **No Psychological State Inferences**: Teaching activities and observable behaviours do **not** measure internal student mental states, motivation, concentration, comprehension, boredom, intelligence, or emotional states.
+* **Provenance Attribution**: Activity labels originate strictly from validated manual segment annotations or curriculum metadata (`Activity source: Manual annotation`). No AI hallucination or fabricated activity labels are used.
+
+### Canonical Target Teaching Activities
+1. **Lecture (`#1F4E79` — Deep Blue):** Instructor-led instructional delivery where information, concepts, and explanations are presented to the whole classroom.
+2. **Discussion (`#2E7D32` — Emerald Green):** Interactive verbal exchange involving student-to-student or teacher-to-student dialogues, Q&A, or structured collaborative conversations.
+3. **Problem-solving (`#6A1B9A` — Amethyst Purple):** Task-centered active learning where students work individually or collaboratively on exercises, worksheets, or laboratory tasks.
+4. **Presentation (`#D35400` — Rust Orange):** Formal or informal delivery where designated students or guest speakers present projects, solutions, or demonstrations to peers.
+
+### Core Computational Engine (`src/activity/`)
+1. **Teaching Activity Segment Management (`src/activity/manager.py`):**
+   * `TeachingActivitySegment` dataclass with `MM:SS` formatted accessors.
+   * `validate_activity_segments`: Strict temporal validation verifying non-negative timestamps, start < end, end within video duration, canonical activity types, and rigorous overlap detection ($\Delta t \le 10^{-4}\text{s}$).
+   * `load_teaching_activity_segments` / `save_teaching_activity_segments`: Disk persistence to `data/processed/<video_id>/teaching_activity_segments.csv`.
+   * `create_default_demo_segments`: Automatic partitioned demo intervals for demonstration videos.
+2. **Activity-Behaviour Mapping & Distribution Accounting (`src/activity/analyzer.py`):**
+   * `map_predictions_to_activities`: Assigns activity segments to recurrent predictions based on temporal occurrence without re-training models (`torch.no_grad()`).
+   * `calculate_activity_behaviour_distributions`: Computes exact observed durations (seconds) and relative percentage shares per behaviour within each activity, strictly avoiding double-counting across overlapping sequence windows.
+   * `generate_activity_summary_table`: Aggregates activity duration, active track counts, total observed time, dominant behaviour, dominant percentage share, and explicit tie detection (`is_tie = True`).
+   * `calculate_activity_transitions`: Chronological behaviour shifts occurring within instructional activity intervals.
+   * `export_teaching_activity_results`: Multi-CSV serialization.
+3. **Visual Analytics Engine (`src/activity/visualization.py`):**
+   * `create_activity_timeline_figure`: Horizontal Gantt-style timeline chart with activity segment blocks, `MM:SS` timecodes, and dominant behaviour badges.
+   * `create_activity_behaviour_distribution_figure`: Grouped bar chart comparing observable behaviour percentage shares across teaching activities.
+   * `create_activity_behaviour_heatmap_figure`: Matrix heatmap of [Behaviours × Activities] with percentage share annotations.
+   * `create_track_activity_figure`: Track-specific activity breakdown chart.
+
+### Decoupled Storage & CSV Export (`results/teaching_activity/<video_id>/`)
+* **`teaching_activity_segments.csv`:** Validated instructional segments with start/end timecodes and annotation source.
+* **`activity_behaviour_summary_<model>.csv`:** Activity-level summary table with dominant behaviours and tie indicators.
+* **`activity_behaviour_distributions_<model>.csv`:** Activity-behaviour cross-distribution matrix with observed seconds and percentage shares.
+* **`activity_transitions_<model>.csv`:** Activity-stratified transition frequencies.
+
+---
+
+## 16. Automated Testing
+
+Run the complete PyTest suite covering video validation, preprocessing, frame sampling, person detection, multi-object tracking, observable behaviour recognition, CNN visual feature extraction, temporal sequence creation, recurrent sequence modelling, trajectory extraction, teaching activity analysis, and Streamlit UI workflows:
 
 ```bash
 pytest tests/ -v
 ```
 
-The **136-test automated suite** covers:
+The **153-test automated suite** (100% pass rate) covers:
 * `test_video_utils.py` (14 tests): Filename sanitization, path traversal prevention, extension validation, OpenCV decodability, empty/corrupt file rejection, metadata extraction.
 * `test_frame_extractor.py` (13 tests): Image validation, color conversion, resizing, chronological timestamp ordering, sampling ratios, CSV schema verification, cache handling.
 * `test_detector.py` (7 tests): YOLO model initialization, person detection inference on classroom scenes, confidence threshold filtering, bounding box rendering, empty/zero-person frame handling, invalid inputs, and batch pipeline execution.
@@ -773,22 +819,23 @@ The **136-test automated suite** covers:
 * `test_temporal.py` (22 tests): Parameter validation, sliding-window count formula verification, chronological frame index sorting, short track skipping policy, gap splitting policy, multi-track isolation, dominant behaviour calculation, PyTorch FloatTensor conversion, `ClassroomSequenceDataset` DataLoader batching, end-to-end pipeline execution with `.npy` + `.csv` file output, and timeline/coverage visualizations.
 * `test_temporal_models.py` (20 tests): Target behaviour class integer encoding, track-grouped train/val/test splitting strictly preventing overlapping window leakage, training set class weighting, PyTorch Dataset & DataLoader factories, forward pass & output shape verification for RNN, LSTM, and GRU, parameter count verification, training loop execution, fair comparison multi-model training, early stopping validation, test set evaluation metrics calculation, comparison table generation, single-sequence inference, batch prediction CSV generation, training curves plotting, confusion matrix plotting, and model comparison plotting.
 * `test_trajectory.py` (16 tests): Timestamp formatting (`MM:SS`), track trajectory isolation, time-range window filtering, tracking gap detection, consecutive segment merging, chronological transition calculation, duration and distribution calculation, trajectory summary generation, unknown/uncertain label preservation, zero-retraining inference reuse with existing checkpoints, CSV export schema verification, categorical timeline figure generation, duration distribution figure generation, transitions figure generation, multi-model comparison timeline generation, and classroom multi-track overview figure generation.
-* `test_app.py` (12 tests): Streamlit end-to-end UI integration tests covering initial render, file upload, metric cards, extraction button triggers, detection workflows, Feature 4 tracking workflows, Feature 5 behaviour recognition workflows, Feature 6 CNN extraction workflows, Feature 7 temporal sequence creation workflows, Feature 8 recurrent temporal modelling UI workflows, Feature 9 observable behaviour trajectory workflows, and corrupted upload handling.
+* `test_activity.py` (16 tests): Activity labels & canonical constants, segment dataclass properties, temporal validation (negative start, start >= end, exceeds duration, invalid activity, overlap detection), segment persistence and loading roundtrip, default demo segment generator, chronological prediction mapping, observed duration & percentage share calculation, summary table generation & explicit tie detection, activity-stratified transitions, CSV export verification, and visual analytics figures (timeline, grouped bars, heatmap, track breakdown).
+* `test_app.py` (13 tests): Streamlit end-to-end UI integration tests covering initial render, file upload, metric cards, extraction button triggers, detection workflows, Feature 4 tracking workflows, Feature 5 behaviour recognition workflows, Feature 6 CNN extraction workflows, Feature 7 temporal sequence creation workflows, Feature 8 recurrent temporal modelling UI workflows, Feature 9 observable behaviour trajectory workflows, Feature 10 teaching activity analysis workflows, and corrupted upload handling.
 
 ---
 
-## 16. Current Limitations (Features 1–9 Scope)
+## 17. Current Limitations (Features 1–10 Scope)
 
-Features 1 through 9 focus on **Classroom Video Ingestion, Preprocessing, Frame Extraction, Person Detection, Multi-Object Tracking, Observable Behaviour Recognition, CNN Visual Feature Extraction, Temporal Sequence Creation, Recurrent Temporal Sequence Modelling, and Observable Behaviour Trajectory Profiling**.
+Features 1 through 10 focus on **Classroom Video Ingestion, Preprocessing, Frame Extraction, Person Detection, Multi-Object Tracking, Observable Behaviour Recognition, CNN Visual Feature Extraction, Temporal Sequence Creation, Recurrent Temporal Sequence Modelling, Observable Behaviour Trajectory Profiling, and Teaching Activity Analysis**.
 
 Current limitations:
-* Trajectories visualize individual and classroom observable behaviours over time. Correlating these observable trajectories with instructor teaching modalities (lecture, small group, individual seatwork) is scheduled for Feature 10.
+* Teaching activity labels are based on designated interval segments (manual or curriculum metadata); automated multimodal video-audio activity detection is out of scope.
 * Models represent observable physical classroom behaviours and do not infer mental engagement, cognitive focus, comprehension, or motivation.
 * Baseline comparison against static single-frame CNN classifiers and full ablation studies are scheduled for Feature 11 and Feature 12.
 
 ---
 
-## 17. Future Research Pipeline Roadmap
+## 18. Future Research Pipeline Roadmap
 
 The subsequent development phases will follow this structured academic pipeline:
 
@@ -811,7 +858,7 @@ Sequence Modeling (RNN / LSTM / GRU) (Feature 8 — Completed)
    ↓
 Observable Behaviour Trajectory Profiling (Feature 9 — Completed)
    ↓
-Teaching Activity Correlation Analysis (Feature 10)
+Teaching Activity Analysis (Feature 10 — Completed)
    ↓
 Baseline Model Comparison (Feature 11)
    ↓
