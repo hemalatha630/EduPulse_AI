@@ -362,4 +362,29 @@ def test_app_teaching_activity_workflow():
     assert download_btn is not None
 
 
+def test_app_research_experiments_workflow():
+    """Verify Feature 11 research experiments UI workflow end-to-end."""
+    candidates = [
+        ROOT_DIR / "scratch" / "sample_media" / "classroom_lecture_demo.mp4",
+        ROOT_DIR / "data" / "videos" / "classroom_lecture_demo.mp4",
+    ]
+    demo_video = next((p for p in candidates if p.exists()), None)
+    if not demo_video:
+        pytest.skip("classroom_lecture_demo.mp4 required for full research experiments UI test")
+
+    video_bytes = demo_video.read_bytes()
+    at = AppTest.from_file(APP_FILE, default_timeout=120).run()
+    at.file_uploader[0].upload(filename="classroom_lecture_demo.mp4", content=video_bytes).run()
+    assert not at.exception
+
+    # Verify Feature 11 header is present
+    headers = [h.value for h in at.header]
+    assert any("Research Experiments, Ablation & Temporal Error Analysis" in h for h in headers)
+
+    # Verify Feature 11 subheaders
+    subheaders = [s.value for s in at.subheader]
+    assert any("Experimental Execution & Evaluation Controls" in s for s in subheaders)
+
+
+
 

@@ -799,17 +799,60 @@ Feature 10 extends observable behaviour trajectory profiling into instructional 
 * **`activity_behaviour_distributions_<model>.csv`:** Activity-behaviour cross-distribution matrix with observed seconds and percentage shares.
 * **`activity_transitions_<model>.csv`:** Activity-stratified transition frequencies.
 
+* **`activity_transitions_<model>.csv`:** Activity-stratified transition frequencies.
+
 ---
 
-## 16. Automated Testing
+## 16. Feature 11 — Research Experiments, Ablation & Temporal Error Analysis
 
-Run the complete PyTest suite covering video validation, preprocessing, frame sampling, person detection, multi-object tracking, observable behaviour recognition, CNN visual feature extraction, temporal sequence creation, recurrent sequence modelling, trajectory extraction, teaching activity analysis, and Streamlit UI workflows:
+Feature 11 provides rigorous academic evaluation of the classroom video temporal modeling pipeline through controlled comparative benchmarks, single-variable ablation studies, and in-depth temporal error analysis.
+
+### Core Scientific Components
+
+1. **4-Way Baseline Model Comparison:**
+   * **Frame-Level CNN Baseline (`FrameCNNClassifier`):** Non-recurrent static baseline mapping 512-dim CNN visual features ($x_{t_L}$) to behaviour logits via an MLP head ($512 \to 128 \to \text{ReLU} \to \text{Dropout} \to 6$), sharing identical training parameters, loss weighting, and track-grouped test split.
+   * **Recurrent Architectures:** Benchmarked against CNN+RNN, CNN+LSTM, and CNN+GRU.
+   * **Measured Values:** Evaluates actual Accuracy, Macro/Weighted Precision, Recall, Macro/Weighted F1-score, parameter counts, and inference latency (ms/sample). Strictly no invented numbers.
+
+2. **Controlled Ablation Studies:**
+   * **Architectural Recurrence Benefit:** Isolates empirical gain of temporal recurrence over static frame-level modeling ($\Delta F_1$).
+   * **Sequence Window Length ($L$):** Compares $L \in \{5, 10, 15\}$ frames (~0.8s, ~1.7s, ~2.5s) to assess stability vs boundary lag.
+   * **Temporal Window Stride ($S$):** Compares $S \in \{1, 2, 5\}$ frames to evaluate window density and resolution vs computational cost.
+   * **Loss Class-Weighting Strategy:** Evaluates inverse-frequency weighted cross-entropy vs unweighted cross-entropy on minority behaviour recall.
+
+3. **Temporal Error Analysis Across Time:**
+   * **Transition Boundary Dynamics:** Quantifies error clustering near behaviour transitions ($|\Delta t| \le 0.5\text{s}$) vs steady-state intervals, calculating boundary error multipliers.
+   * **Duration Tier Sensitivity:** Stratifies error rates into Fleeting (< 2.0s), Moderate (2.0s–5.0s), and Sustained ($\ge 5.0\text{s}$) episodes.
+   * **Visually Similar Behaviour Pairs:** Diagnoses confusion between ambiguous actions (*Looking toward instruction* $\leftrightarrow$ *Looking away*, *Reading/writing* $\leftrightarrow$ *Mobile-device activity*).
+   * **Activity-Conditioned Error Rates:** Assesses misclassification rates stratified across teaching activities (Lecture, Discussion, Problem-solving, Presentation).
+   * **Concrete Misclassification Case Studies:** Extracts representative test errors with diagnostic contextual rationales.
+
+4. **Per-Class Breakdown & Dataset Limitations:**
+   * Full precision, recall, F1, and support across all 6 canonical classes.
+   * Automated limitation alerts for under-represented ($N < 5$) or missing ($N = 0$) classes in the evaluated test partition.
+
+5. **Evidence-Based Pedagogical Conclusions:**
+   * Programmatic synthesis of peer-review-ready conclusion statements grounded strictly in actual measured numbers.
+   * Enforces zero internal mental state inferences (strictly prohibits terms like "attention", "boredom", "comprehension", "motivation").
+
+### Feature 11 File Outputs
+
+* **`baseline_comparison.csv`:** Tabular comparison of Frame-level CNN, RNN, LSTM, and GRU test metrics.
+* **`ablation_summary.csv`:** Controlled trial records with baseline vs ablated condition metrics and $\Delta F_1$.
+* **`temporal_error_records.csv`:** Sequence-level error logs with boundary distance, duration tier, and diagnosis notes.
+* **`per_class_metrics.csv`:** Granular 6-class metrics table with representation status.
+
+---
+
+## 17. Automated Testing
+
+Run the complete PyTest suite covering video validation, preprocessing, frame sampling, person detection, multi-object tracking, observable behaviour recognition, CNN visual feature extraction, temporal sequence creation, recurrent sequence modelling, trajectory extraction, teaching activity analysis, research experiments & ablation, and Streamlit UI workflows:
 
 ```bash
 pytest tests/ -v
 ```
 
-The **153-test automated suite** (100% pass rate) covers:
+The **166-test automated suite** (100% pass rate) covers:
 * `test_video_utils.py` (14 tests): Filename sanitization, path traversal prevention, extension validation, OpenCV decodability, empty/corrupt file rejection, metadata extraction.
 * `test_frame_extractor.py` (13 tests): Image validation, color conversion, resizing, chronological timestamp ordering, sampling ratios, CSV schema verification, cache handling.
 * `test_detector.py` (7 tests): YOLO model initialization, person detection inference on classroom scenes, confidence threshold filtering, bounding box rendering, empty/zero-person frame handling, invalid inputs, and batch pipeline execution.
@@ -820,22 +863,23 @@ The **153-test automated suite** (100% pass rate) covers:
 * `test_temporal_models.py` (20 tests): Target behaviour class integer encoding, track-grouped train/val/test splitting strictly preventing overlapping window leakage, training set class weighting, PyTorch Dataset & DataLoader factories, forward pass & output shape verification for RNN, LSTM, and GRU, parameter count verification, training loop execution, fair comparison multi-model training, early stopping validation, test set evaluation metrics calculation, comparison table generation, single-sequence inference, batch prediction CSV generation, training curves plotting, confusion matrix plotting, and model comparison plotting.
 * `test_trajectory.py` (16 tests): Timestamp formatting (`MM:SS`), track trajectory isolation, time-range window filtering, tracking gap detection, consecutive segment merging, chronological transition calculation, duration and distribution calculation, trajectory summary generation, unknown/uncertain label preservation, zero-retraining inference reuse with existing checkpoints, CSV export schema verification, categorical timeline figure generation, duration distribution figure generation, transitions figure generation, multi-model comparison timeline generation, and classroom multi-track overview figure generation.
 * `test_activity.py` (16 tests): Activity labels & canonical constants, segment dataclass properties, temporal validation (negative start, start >= end, exceeds duration, invalid activity, overlap detection), segment persistence and loading roundtrip, default demo segment generator, chronological prediction mapping, observed duration & percentage share calculation, summary table generation & explicit tie detection, activity-stratified transitions, CSV export verification, and visual analytics figures (timeline, grouped bars, heatmap, track breakdown).
-* `test_app.py` (13 tests): Streamlit end-to-end UI integration tests covering initial render, file upload, metric cards, extraction button triggers, detection workflows, Feature 4 tracking workflows, Feature 5 behaviour recognition workflows, Feature 6 CNN extraction workflows, Feature 7 temporal sequence creation workflows, Feature 8 recurrent temporal modelling UI workflows, Feature 9 observable behaviour trajectory workflows, Feature 10 teaching activity analysis workflows, and corrupted upload handling.
+* `test_experiments.py` (12 tests): Frame-level CNN forward pass shapes (2D & 3D), baseline training loop & checkpoint creation, 4-way baseline comparison engine, architecture ablation trial generation, loss weighting ablation execution, transition boundary distance calculation, duration tier categorization, visual similarity matching, temporal error analysis engine & case studies, per-class metrics reporting & representation status detection, top confused pairs extraction, evidence-based conclusions validation with zero mental-state terms, and all 6 visualization figure routines.
+* `test_app.py` (14 tests): Streamlit end-to-end UI integration tests covering initial render, file upload, metric cards, extraction button triggers, detection workflows, Feature 4 tracking workflows, Feature 5 behaviour recognition workflows, Feature 6 CNN extraction workflows, Feature 7 temporal sequence creation workflows, Feature 8 recurrent temporal modelling UI workflows, Feature 9 observable behaviour trajectory workflows, Feature 10 teaching activity analysis workflows, Feature 11 research experiments workflows, and corrupted upload handling.
 
 ---
 
-## 17. Current Limitations (Features 1–10 Scope)
+## 18. Current Limitations (Features 1–11 Scope)
 
-Features 1 through 10 focus on **Classroom Video Ingestion, Preprocessing, Frame Extraction, Person Detection, Multi-Object Tracking, Observable Behaviour Recognition, CNN Visual Feature Extraction, Temporal Sequence Creation, Recurrent Temporal Sequence Modelling, Observable Behaviour Trajectory Profiling, and Teaching Activity Analysis**.
+Features 1 through 11 focus on **Classroom Video Ingestion, Preprocessing, Frame Extraction, Person Detection, Multi-Object Tracking, Observable Behaviour Recognition, CNN Visual Feature Extraction, Temporal Sequence Creation, Recurrent Temporal Sequence Modelling, Observable Behaviour Trajectory Profiling, Teaching Activity Analysis, and Research Experiments with Baseline Comparison, Ablation Studies, and Temporal Error Dynamics**.
 
 Current limitations:
 * Teaching activity labels are based on designated interval segments (manual or curriculum metadata); automated multimodal video-audio activity detection is out of scope.
 * Models represent observable physical classroom behaviours and do not infer mental engagement, cognitive focus, comprehension, or motivation.
-* Baseline comparison against static single-frame CNN classifiers and full ablation studies are scheduled for Feature 11 and Feature 12.
+* Dataset sample distribution: Evaluated single-clip partitions may possess natural class imbalances, with certain behaviour classes having low or zero test representation; multi-classroom cross-validation is recommended for broader generalization.
 
 ---
 
-## 18. Future Research Pipeline Roadmap
+## 19. Future Research Pipeline Roadmap
 
 The subsequent development phases will follow this structured academic pipeline:
 
@@ -860,11 +904,9 @@ Observable Behaviour Trajectory Profiling (Feature 9 — Completed)
    ↓
 Teaching Activity Analysis (Feature 10 — Completed)
    ↓
-Baseline Model Comparison (Feature 11)
+Research Experiments, Ablation & Temporal Error Analysis (Feature 11 — Completed)
    ↓
-Ablation Studies & Temporal Error Analysis (Feature 12)
-   ↓
-Final Interactive Analytics Dashboard (Feature 13)
+Final Interactive Analytics Dashboard (Feature 12)
 ```
 
 
