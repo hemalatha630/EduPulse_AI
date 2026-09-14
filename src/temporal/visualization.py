@@ -9,6 +9,8 @@ model prediction or claim internal mental engagement.
 import json
 from typing import Dict, List, Optional
 
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -182,6 +184,248 @@ def create_track_coverage_figure(metadata_df: pd.DataFrame) -> Optional[plt.Figu
         spine.set_color("#374151")
 
     ax.grid(True, linestyle="--", alpha=0.2, color="#4B5563", axis="x")
+
+    plt.tight_layout()
+    return fig
+
+
+def create_training_curves_figure(
+    history_df: pd.DataFrame,
+    model_name: str,
+) -> Optional[plt.Figure]:
+    """Create a dual-panel figure showing training & validation loss and accuracy curves.
+
+    Args:
+        history_df: DataFrame with columns: epoch, train_loss, train_acc, val_loss, val_acc.
+        model_name: Name of model (e.g. 'RNN', 'LSTM', 'GRU').
+
+    Returns:
+        Matplotlib Figure object or None if history is empty.
+    """
+    if history_df.empty or "epoch" not in history_df.columns:
+        return None
+
+    fig, (ax_loss, ax_acc) = plt.subplots(1, 2, figsize=(11.0, 4.2), dpi=100)
+    fig.patch.set_facecolor("#111827")
+
+    epochs = history_df["epoch"].values
+
+    # Left Panel: Loss
+    ax_loss.set_facecolor("#1F2937")
+    ax_loss.plot(
+        epochs,
+        history_df["train_loss"],
+        color="#38BDF8",  # Sky blue
+        linewidth=2.2,
+        marker="o",
+        markersize=4.5,
+        label="Train Loss",
+    )
+    ax_loss.plot(
+        epochs,
+        history_df["val_loss"],
+        color="#F43F5E",  # Rose red
+        linewidth=2.2,
+        marker="s",
+        markersize=4.5,
+        linestyle="--",
+        label="Val Loss",
+    )
+    ax_loss.set_title(f"{model_name.upper()} — Loss Curve", color="#F9FAFB", fontsize=11, fontweight="bold", pad=10)
+    ax_loss.set_xlabel("Epoch", color="#D1D5DB", fontsize=9.5)
+    ax_loss.set_ylabel("CrossEntropy Loss", color="#D1D5DB", fontsize=9.5)
+    ax_loss.tick_params(colors="#9CA3AF", labelsize=8.5)
+    ax_loss.legend(facecolor="#111827", edgecolor="#374151", labelcolor="#F3F4F6", fontsize=8.5)
+    ax_loss.grid(True, linestyle="--", alpha=0.25, color="#4B5563")
+    for spine in ax_loss.spines.values():
+        spine.set_color("#374151")
+
+    # Right Panel: Accuracy
+    ax_acc.set_facecolor("#1F2937")
+    ax_acc.plot(
+        epochs,
+        history_df["train_acc"] * 100,
+        color="#34D399",  # Emerald green
+        linewidth=2.2,
+        marker="o",
+        markersize=4.5,
+        label="Train Accuracy (%)",
+    )
+    ax_acc.plot(
+        epochs,
+        history_df["val_acc"] * 100,
+        color="#FBBF24",  # Amber
+        linewidth=2.2,
+        marker="s",
+        markersize=4.5,
+        linestyle="--",
+        label="Val Accuracy (%)",
+    )
+    ax_acc.set_title(f"{model_name.upper()} — Accuracy Curve", color="#F9FAFB", fontsize=11, fontweight="bold", pad=10)
+    ax_acc.set_xlabel("Epoch", color="#D1D5DB", fontsize=9.5)
+    ax_acc.set_ylabel("Accuracy (%)", color="#D1D5DB", fontsize=9.5)
+    ax_acc.tick_params(colors="#9CA3AF", labelsize=8.5)
+    ax_acc.legend(facecolor="#111827", edgecolor="#374151", labelcolor="#F3F4F6", fontsize=8.5)
+    ax_acc.grid(True, linestyle="--", alpha=0.25, color="#4B5563")
+    for spine in ax_acc.spines.values():
+        spine.set_color("#374151")
+
+    plt.tight_layout()
+    return fig
+
+
+def create_confusion_matrix_figure(
+    cm: np.ndarray,
+    class_names: List[str],
+    model_name: str,
+) -> plt.Figure:
+    """Create an annotated confusion matrix heatmap.
+
+    Args:
+        cm: Confusion matrix array of shape (K, K).
+        class_names: List of K class name strings.
+        model_name: Name of model for title.
+
+    Returns:
+        Matplotlib Figure object.
+    """
+    fig, ax = plt.subplots(figsize=(8.0, 6.5), dpi=100)
+    fig.patch.set_facecolor("#111827")
+    ax.set_facecolor("#1F2937")
+
+    # Abbreviate long class names for clean axis display
+    short_names = [
+        name.replace("Looking toward the instructional activity", "Instruction")
+        .replace("Reading/writing", "Read/Write")
+        .replace("Interacting with peers", "Peer Inter.")
+        .replace("Looking away", "Look Away")
+        .replace("Mobile-device activity", "Mobile")
+        .replace("Head-down behaviour", "Head Down")
+        for name in class_names
+    ]
+
+    im = ax.imshow(cm, interpolation="nearest", cmap="Blues")
+    cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+    cbar.ax.tick_params(colors="#9CA3AF", labelsize=8.5)
+
+    num_classes = len(class_names)
+    thresh = cm.max() / 2.0 if cm.max() > 0 else 1.0
+
+    for i in range(num_classes):
+        for j in range(num_classes):
+            val = cm[i, j]
+            color = "#FFFFFF" if val > thresh else "#111827" if val > 0 else "#6B7280"
+            ax.text(
+                j,
+                i,
+                f"{val}",
+                ha="center",
+                va="center",
+                color=color,
+                fontsize=9.5,
+                fontweight="bold" if val > 0 else "normal",
+            )
+
+    ax.set_xticks(range(num_classes))
+    ax.set_yticks(range(num_classes))
+    ax.set_xticklabels(short_names, rotation=35, ha="right", color="#D1D5DB", fontsize=9)
+    ax.set_yticklabels(short_names, color="#D1D5DB", fontsize=9)
+
+    ax.set_xlabel("Predicted Observable Behaviour", color="#F9FAFB", fontsize=10, fontweight="bold", labelpad=10)
+    ax.set_ylabel("True Observable Behaviour", color="#F9FAFB", fontsize=10, fontweight="bold", labelpad=10)
+
+    ax.set_title(
+        f"{model_name.upper()} — Test Set Confusion Matrix\n",
+        color="#F9FAFB",
+        fontsize=12,
+        fontweight="bold",
+        pad=8,
+    )
+    fig.text(
+        0.5,
+        0.93,
+        "Observable behaviour classification errors only. Does NOT reflect internal mental states.",
+        ha="center",
+        va="center",
+        fontsize=8.0,
+        fontstyle="italic",
+        color="#9CA3AF",
+    )
+
+    for spine in ax.spines.values():
+        spine.set_color("#374151")
+
+    plt.tight_layout()
+    return fig
+
+
+def create_model_comparison_figure(
+    comparison_df: pd.DataFrame,
+) -> Optional[plt.Figure]:
+    """Create a grouped bar chart comparing Accuracy, Macro F1, and Weighted F1 across models.
+
+    Args:
+        comparison_df: DataFrame with columns: Model, Accuracy, Macro F1, Weighted F1.
+
+    Returns:
+        Matplotlib Figure object or None if dataframe is empty.
+    """
+    if comparison_df.empty or "Model" not in comparison_df.columns:
+        return None
+
+    models = comparison_df["Model"].tolist()
+    x = np.arange(len(models))
+    width = 0.25
+
+    # Helper to parse percentage or float strings
+    def parse_col(col_name: str) -> List[float]:
+        vals = []
+        for v in comparison_df[col_name]:
+            v_str = str(v).replace("%", "").strip()
+            try:
+                val_f = float(v_str)
+                vals.append(val_f / 100.0 if "%" in str(v) else val_f)
+            except Exception:
+                vals.append(0.0)
+        return vals
+
+    accs = parse_col("Accuracy")
+    macro_f1s = parse_col("Macro F1")
+    weighted_f1s = parse_col("Weighted F1")
+
+    fig, ax = plt.subplots(figsize=(8.5, 4.2), dpi=100)
+    fig.patch.set_facecolor("#111827")
+    ax.set_facecolor("#1F2937")
+
+    rects1 = ax.bar(x - width, [a * 100 for a in accs], width, label="Accuracy (%)", color="#38BDF8", alpha=0.9)
+    rects2 = ax.bar(x, [f * 100 for f in macro_f1s], width, label="Macro F1 (×100)", color="#A855F7", alpha=0.9)
+    rects3 = ax.bar(x + width, [w * 100 for w in weighted_f1s], width, label="Weighted F1 (×100)", color="#34D399", alpha=0.9)
+
+    ax.set_ylabel("Score (%)", color="#D1D5DB", fontsize=9.5)
+    ax.set_title("Fair Model Comparison — RNN vs LSTM vs GRU", color="#F9FAFB", fontsize=12, fontweight="bold", pad=10)
+    ax.set_xticks(x)
+    ax.set_xticklabels(models, color="#F9FAFB", fontsize=10, fontweight="bold")
+    ax.tick_params(colors="#9CA3AF", labelsize=8.5)
+    ax.set_ylim(0, 110)
+    ax.legend(facecolor="#111827", edgecolor="#374151", labelcolor="#F3F4F6", fontsize=8.5)
+    ax.grid(True, linestyle="--", alpha=0.2, color="#4B5563", axis="y")
+
+    # Value labels on top of bars
+    for rect in list(rects1) + list(rects2) + list(rects3):
+        h = rect.get_height()
+        ax.annotate(
+            f"{h:.1f}",
+            xy=(rect.get_x() + rect.get_width() / 2, h),
+            xytext=(0, 2),
+            textcoords="offset points",
+            ha="center",
+            va="bottom",
+            fontsize=7.5,
+            color="#E5E7EB",
+        )
+
+    for spine in ax.spines.values():
+        spine.set_color("#374151")
 
     plt.tight_layout()
     return fig

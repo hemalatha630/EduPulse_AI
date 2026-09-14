@@ -252,3 +252,33 @@ def test_app_temporal_sequence_workflow():
     assert any("Track Temporal Window Coverage" in s for s in subheaders_after)
     assert any("Temporal Sequences Metadata" in s for s in subheaders_after)
 
+
+def test_app_temporal_modelling_workflow():
+    """Verify Feature 8 recurrent temporal modelling UI workflow end-to-end."""
+    candidates = [
+        ROOT_DIR / "scratch" / "sample_media" / "classroom_lecture_demo.mp4",
+        ROOT_DIR / "data" / "videos" / "classroom_lecture_demo.mp4",
+    ]
+    demo_video = next((p for p in candidates if p.exists()), None)
+    if not demo_video:
+        pytest.skip("classroom_lecture_demo.mp4 required for full temporal modelling UI test")
+
+    video_bytes = demo_video.read_bytes()
+    at = AppTest.from_file(APP_FILE, default_timeout=120).run()
+    at.file_uploader[0].upload(filename="classroom_lecture_demo.mp4", content=video_bytes).run()
+    assert not at.exception
+
+    # Verify Feature 8 header is present
+    headers = [h.value for h in at.header]
+    assert any("Feature 8: Recurrent Temporal Modelling" in h for h in headers)
+
+    # Verify split breakdown subheader is rendered
+    subheaders = [s.value for s in at.subheader]
+    assert any("Track-Grouped Data Splitting" in s for s in subheaders)
+    assert any("Recurrent Model Hyperparameters" in s for s in subheaders)
+
+    # Verify train button exists
+    train_btn = next((b for b in at.button if "Train Model(s)" in b.label), None)
+    assert train_btn is not None
+
+

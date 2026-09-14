@@ -18,6 +18,7 @@ import cv2
 import numpy as np
 import pandas as pd
 import streamlit as st
+import torch
 
 from src.behaviour.behaviour_classifier import (
     BehaviourClassifier,
@@ -46,11 +47,19 @@ from src.config import (
     CNN_FEATURE_DIM,
     CNN_FEATURES_NPY_FILENAME,
     CNN_METADATA_CSV_FILENAME,
+    DEFAULT_BATCH_SIZE,
     DEFAULT_BEHAVIOUR_CONF_THRESHOLD,
     DEFAULT_CNN_BATCH_SIZE,
     DEFAULT_CNN_MODEL,
     DEFAULT_CONFIDENCE_THRESHOLD,
+    DEFAULT_DROPOUT,
+    DEFAULT_EPOCHS,
+    DEFAULT_HIDDEN_SIZE,
+    DEFAULT_LEARNING_RATE,
     DEFAULT_MAX_FRAME_GAP,
+    DEFAULT_NUM_LAYERS,
+    DEFAULT_PATIENCE,
+    DEFAULT_RANDOM_SEED,
     DEFAULT_SAMPLING_INTERVAL,
     DEFAULT_SEQUENCE_LENGTH,
     DEFAULT_SEQUENCE_STRIDE,
@@ -59,10 +68,17 @@ from src.config import (
     DEFAULT_YOLO_MODEL,
     EXCLUDED_INTERNAL_STATES,
     FRAMES_DIR,
+    MODEL_GRU,
+    MODEL_LSTM,
+    MODEL_RNN,
+    MODELS_TEMPORAL_DIR,
+    PREDICTIONS_CSV_FILENAME,
     PROCESSED_DIR,
     PROJECT_TITLE,
+    RESULTS_TEMPORAL_DIR,
     SUPPORTED_CNN_MODELS,
     SUPPORTED_EXTENSIONS,
+    SUPPORTED_TEMPORAL_MODELS,
     SUPPORTED_TRACKERS,
     TARGET_OBSERVABLE_BEHAVIOURS,
     TEMPORAL_SEQUENCES_METADATA_FILENAME,
@@ -74,12 +90,29 @@ from src.config import (
 )
 from src.temporal import (
     ClassroomSequenceDataset,
+    EvaluationMetrics,
     SequenceSummary,
+    SupervisedSequenceDataset,
+    TARGET_CLASSES,
+    TemporalDatasetSplit,
     TemporalSequenceGenerator,
+    TrainConfig,
+    TrainResult,
+    compare_temporal_models,
+    create_confusion_matrix_figure,
+    create_model_comparison_figure,
     create_sequence_timeline_figure,
+    create_split_dataloaders,
     create_track_coverage_figure,
+    create_training_curves_figure,
+    evaluate_temporal_model,
+    generate_batch_predictions,
+    predict_sequence,
+    prepare_track_grouped_splits,
     run_temporal_sequence_creation,
     sequences_to_tensor,
+    train_all_temporal_models,
+    train_temporal_model,
 )
 from src.detection.detector import (
     DetectionResult,
@@ -185,8 +218,9 @@ def render_sidebar():
         st.success("✅ **Feature 4: Student / Person Tracking**")
         st.success("✅ **Feature 5: Observable Behaviour Recognition**")
         st.success("✅ **Feature 6: CNN Visual Feature Extraction**")
-        st.success("🚀 **Feature 7: Temporal Sequence Creation**")
-        st.caption("Next stages (Feature 8: Temporal Sequence Modelling RNN/LSTM) unlock in future milestones.")
+        st.success("✅ **Feature 7: Temporal Sequence Creation**")
+        st.success("🚀 **Feature 8: Temporal Modelling (RNN / LSTM / GRU)**")
+        st.caption("Next stages (Feature 9: Temporal Engagement Aggregation) unlock in future milestones.")
 
 
 def render_header():
@@ -2075,6 +2109,507 @@ for batch_tensors, batch_metadata in dataloader:
             )
 
 
+def render_temporal_modelling_section(saved_path: Path):
+    """Render Feature 8: Recurrent Temporal Modelling (Vanilla RNN, LSTM, GRU)."""
+    video_id = derive_video_id(saved_path)
+    output_dir = PROCESSED_DIR / video_id
+    seq_npy_path = output_dir / TEMPORAL_SEQUENCES_NPY_FILENAME
+    seq_meta_path = output_dir / TEMPORAL_SEQUENCES_METADATA_FILENAME
+
+    st.header("🧠 Feature 8: Recurrent Temporal Modelling (RNN / LSTM / GRU)")
+    st.markdown(
+        "Models multi-frame temporal dynamics using recurrent neural architectures (**Vanilla RNN**, **LSTM**, and **GRU**) "
+        "to classify observable classroom behaviours across time windows. "
+        "Evaluates generalization strictly on unseen student tracks to eliminate data leakage."
+    )
+
+    with st.expander("🔬 Academic & Pedagogical Framing", expanded=False):
+        st.markdown(
+            """
+            - **Temporal Continuity vs Frame Snapshots:** Single-frame CNN features capture visual appearance at an instant $t_i$, 
+              but cannot capture behavioural transitions or distinguish momentary glances from sustained instructional engagement.
+            - **Recurrent Dynamics:** Recurrent architectures maintain a hidden state vector $h_t$ that evolves through time:
+              $h_t = f(W_{hh} h_{t-1} + W_{xh} x_t + b)$.
+            - **Strict Observable Scope:** Recurrent classifications are strictly confined to the 6 target observable classroom behaviours.
+              No internal mental, cognitive, or emotional states are inferred.
+            - **Data Leakage Elimination:** Because temporal sequences are extracted via overlapping sliding windows (e.g. stride $S < L$),
+              adjacent windows share identical frames. Partitioning by random sequence would lead to severe train-test contamination.
+              EduPulse AI partitions strictly by **Track ID** (all windows for a student track stay in either train, val, or test).
+            """
+        )
+
+    # Prerequisite verification
+    if not (seq_npy_path.exists() and seq_meta_path.exists()):
+        st.info(
+            "👉 **Prerequisites Required:** Temporal sequences must be generated in Feature 7 before recurrent modelling can proceed. "
+            "Please click **'Create Temporal Sequences'** in the section above."
+        )
+        return
+
+    try:
+        seq_array = np.load(seq_npy_path)
+        seq_meta_df = pd.read_csv(seq_meta_path)
+    except Exception as e:
+        st.error(f"❌ Failed to load temporal sequence files: {e}")
+        return
+
+    if len(seq_array) == 0 or len(seq_meta_df) == 0:
+        st.warning("⚠️ Temporal sequence dataset is empty.")
+        return
+
+    st.markdown("---")
+
+    # Dataset & Track-Grouped Splitting
+    st.subheader("🛡️ Track-Grouped Data Splitting (Zero-Leakage)")
+    st.caption(
+        "Student tracks are randomly partitioned into Train (70%), Validation (15%), and Test (15%) subsets. "
+        "All overlapping sequence windows from a tracked student belong to one partition only."
+    )
+
+    split_col1, split_col2, split_col3 = st.columns([1.2, 1.0, 1.0], gap="medium")
+    with split_col1:
+        seed_val = st.number_input(
+            "Deterministic Splitting Seed",
+            min_value=1,
+            max_value=999999,
+            value=DEFAULT_RANDOM_SEED,
+            step=1,
+            key="temporal_split_seed",
+            help="Ensures reproducible track assignment across runs.",
+        )
+    with split_col2:
+        train_ratio_val = st.slider(
+            "Train Tracks Ratio",
+            min_value=0.50,
+            max_value=0.85,
+            value=0.70,
+            step=0.05,
+            key="temporal_train_ratio",
+        )
+    with split_col3:
+        val_ratio_val = st.slider(
+            "Val Tracks Ratio",
+            min_value=0.10,
+            max_value=0.25,
+            value=0.15,
+            step=0.05,
+            key="temporal_val_ratio",
+        )
+
+    test_ratio_val = round(1.0 - train_ratio_val - val_ratio_val, 2)
+    if test_ratio_val <= 0.0:
+        st.error("❌ Train + Val ratios must be less than 1.0 to leave tracks for Testing.")
+        return
+
+    try:
+        splits = prepare_track_grouped_splits(
+            sequences_array=seq_array,
+            metadata_df=seq_meta_df,
+            train_ratio=train_ratio_val,
+            val_ratio=val_ratio_val,
+            test_ratio=test_ratio_val,
+            random_seed=int(seed_val),
+        )
+    except Exception as err:
+        st.error(f"❌ Failed to prepare track-grouped splits: {err}")
+        return
+
+    # Split breakdown metrics
+    m1, m2, m3, m4 = st.columns(4)
+    with m1:
+        st.metric("Total Sequences", f"{splits.total_sequences:,}")
+    with m2:
+        st.metric("Train Set", f"{len(splits.train_dataset)} seqs", f"{len(splits.train_tracks)} tracks")
+    with m3:
+        st.metric("Val Set", f"{len(splits.val_dataset)} seqs", f"{len(splits.val_tracks)} tracks")
+    with m4:
+        st.metric("Test Set (Unseen)", f"{len(splits.test_dataset)} seqs", f"{len(splits.test_tracks)} tracks")
+
+    with st.expander("📊 Split Track & Class Distribution Details", expanded=False):
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown(f"- **Train Track IDs:** `{splits.train_tracks}`")
+            st.markdown(f"- **Validation Track IDs:** `{splits.val_tracks}`")
+            st.markdown(f"- **Test Track IDs:** `{splits.test_tracks}`")
+            st.markdown(f"- **Excluded / Ambiguous Behaviours:** `{splits.excluded_uncertain_count}`")
+        with c2:
+            st.markdown("**Training Class Weights (Train Only):**")
+            weight_items = {
+                TARGET_CLASSES[i]: round(float(splits.class_weights[i]), 2)
+                for i in range(len(TARGET_CLASSES))
+            }
+            st.json(weight_items)
+
+    st.markdown("---")
+
+    # Hyperparameter Controls
+    st.subheader("⚙️ Recurrent Model Hyperparameters")
+    st.caption("All models receive identical training parameters and seed to ensure strict fair comparison.")
+
+    c_m1, c_m2 = st.columns([1.5, 1.0], gap="large")
+    with c_m1:
+        model_selection = st.selectbox(
+            "Select Recurrent Model Architecture",
+            [
+                "Train All Models (Fair Comparison)",
+                "LSTM (Long Short-Term Memory)",
+                "GRU (Gated Recurrent Unit)",
+                "Vanilla RNN",
+            ],
+            index=0,
+            key="temporal_model_select",
+            help="Choose an individual architecture or train all three under identical conditions for side-by-side benchmarking.",
+        )
+    with c_m2:
+        use_weights = st.checkbox(
+            "Use Training Class Weighting",
+            value=True,
+            key="temporal_use_weights",
+            help="Applies inverse frequency loss weighting computed strictly from the training set.",
+        )
+
+    hp_col1, hp_col2, hp_col3, hp_col4 = st.columns(4)
+    with hp_col1:
+        hidden_dim = st.slider("Hidden Dimension", 16, 256, DEFAULT_HIDDEN_SIZE, 16, key="temporal_hidden_size")
+        epochs = st.slider("Max Epochs", 5, 100, DEFAULT_EPOCHS, 5, key="temporal_epochs")
+    with hp_col2:
+        num_layers = st.slider("Recurrent Layers", 1, 3, DEFAULT_NUM_LAYERS, 1, key="temporal_num_layers")
+        batch_size = st.selectbox("Batch Size", [4, 8, 16, 32], index=1, key="temporal_batch_size")
+    with hp_col3:
+        dropout = st.slider("Dropout Rate", 0.0, 0.5, DEFAULT_DROPOUT, 0.05, key="temporal_dropout")
+        patience = st.slider("Early Stopping Patience", 2, 15, DEFAULT_PATIENCE, 1, key="temporal_patience")
+    with hp_col4:
+        lr = st.number_input("Learning Rate", 0.0001, 0.05, DEFAULT_LEARNING_RATE, format="%.4f", key="temporal_lr")
+        seed = st.number_input("Random Seed", 1, 999999, DEFAULT_RANDOM_SEED, 1, key="temporal_seed")
+
+    train_btn = st.button("🚀 Train Model(s)", key="btn_train_temporal_models")
+
+    # Session state keys for this video
+    results_key = f"temporal_results_{video_id}"
+    metrics_key = f"temporal_metrics_{video_id}"
+    splits_key = f"temporal_splits_{video_id}"
+
+    if train_btn:
+        train_cfg = TrainConfig(
+            input_size=seq_array.shape[2],
+            hidden_size=int(hidden_dim),
+            num_layers=int(num_layers),
+            dropout=float(dropout),
+            num_classes=6,
+            learning_rate=float(lr),
+            batch_size=int(batch_size),
+            epochs=int(epochs),
+            patience=int(patience),
+            seed=int(seed),
+            use_class_weights=bool(use_weights),
+        )
+
+        models_to_run = (
+            [MODEL_RNN, MODEL_LSTM, MODEL_GRU]
+            if "All" in model_selection
+            else [MODEL_LSTM if "LSTM" in model_selection else (MODEL_GRU if "GRU" in model_selection else MODEL_RNN)]
+        )
+
+        st.info(f"⏳ Training recurrent architecture(s): **{', '.join([m.upper() for m in models_to_run])}**...")
+        prog_bar = st.progress(0.0)
+        status_text = st.empty()
+
+        train_results_dict = {}
+        eval_metrics_dict = {}
+        _, _, test_loader = create_split_dataloaders(splits, batch_size=train_cfg.batch_size)
+
+        total_steps = len(models_to_run)
+        for idx, m_type in enumerate(models_to_run):
+            status_text.text(f"Training {m_type.upper()} classifier...")
+            m_config = TrainConfig(
+                model_type=m_type,
+                input_size=train_cfg.input_size,
+                hidden_size=train_cfg.hidden_size,
+                num_layers=train_cfg.num_layers,
+                dropout=train_cfg.dropout,
+                num_classes=train_cfg.num_classes,
+                learning_rate=train_cfg.learning_rate,
+                batch_size=train_cfg.batch_size,
+                epochs=train_cfg.epochs,
+                patience=train_cfg.patience,
+                seed=train_cfg.seed,
+                use_class_weights=train_cfg.use_class_weights,
+            )
+
+            model, res = train_temporal_model(
+                config=m_config,
+                split=splits,
+                checkpoint_dir=MODELS_TEMPORAL_DIR,
+                results_dir=RESULTS_TEMPORAL_DIR,
+            )
+            eval_met = evaluate_temporal_model(
+                model=model,
+                test_loader=test_loader,
+                results_dir=RESULTS_TEMPORAL_DIR / m_type,
+            )
+            train_results_dict[m_type] = (model, res)
+            eval_metrics_dict[m_type] = eval_met
+            prog_bar.progress((idx + 1) / total_steps)
+
+        status_text.text("✅ Training & Test Evaluation Complete!")
+        st.session_state[results_key] = train_results_dict
+        st.session_state[metrics_key] = eval_metrics_dict
+        st.session_state[splits_key] = splits
+
+        # Generate batch predictions CSV using best model (or first model)
+        best_name = max(eval_metrics_dict.keys(), key=lambda k: eval_metrics_dict[k].macro_f1)
+        best_mod, _ = train_results_dict[best_name]
+        generate_batch_predictions(
+            model=best_mod,
+            dataset=splits.test_dataset,
+            video_id=video_id,
+            output_csv_path=RESULTS_TEMPORAL_DIR / PREDICTIONS_CSV_FILENAME,
+        )
+        st.success(f"🎉 Successfully trained and evaluated {len(models_to_run)} model(s)!")
+
+    # Check if results exist in session_state or can be loaded
+    train_results_dict = st.session_state.get(results_key)
+    eval_metrics_dict = st.session_state.get(metrics_key)
+    active_splits = st.session_state.get(splits_key, splits)
+
+    # Fallback to pre-saved checkpoints & metrics if available and not yet in state
+    if not train_results_dict:
+        existing_metrics = {}
+        for m_type in [MODEL_RNN, MODEL_LSTM, MODEL_GRU]:
+            m_path = RESULTS_TEMPORAL_DIR / m_type / "metrics.json"
+            if m_path.exists():
+                try:
+                    import json
+                    with open(m_path, "r", encoding="utf-8") as f:
+                        m_data = json.load(f)
+                    existing_metrics[m_type] = EvaluationMetrics(
+                        model_type=m_type,
+                        accuracy=m_data["accuracy"],
+                        macro_f1=m_data["macro_f1"],
+                        weighted_f1=m_data["weighted_f1"],
+                        macro_precision=m_data["macro_precision"],
+                        macro_recall=m_data["macro_recall"],
+                        per_class_metrics=m_data["per_class_metrics"],
+                        confusion_matrix=np.array(m_data["confusion_matrix"]),
+                        y_true=[],
+                        y_pred=[],
+                        y_conf=[],
+                    )
+                except Exception:
+                    pass
+        if existing_metrics:
+            eval_metrics_dict = existing_metrics
+
+    if not eval_metrics_dict:
+        st.info("👉 Click **'Train Model(s)'** above to start recurrent temporal modelling.")
+        return
+
+    st.markdown("---")
+
+    # Fair Comparison Table & Chart (if multiple models available)
+    if len(eval_metrics_dict) > 1:
+        st.subheader("⚖️ Fair Model Comparison (Unseen Test Tracks)")
+        st.caption("Side-by-side benchmarking of recurrent architectures evaluated under strictly identical conditions.")
+
+        comp_df = compare_temporal_models(eval_metrics_dict)
+        st.dataframe(comp_df, use_container_width=True, hide_index=True)
+
+        comp_fig = create_model_comparison_figure(comp_df)
+        if comp_fig is not None:
+            st.pyplot(comp_fig)
+
+        # Architectural comparison note
+        with st.expander("📌 Architectural Comparison & Trade-Offs", expanded=True):
+            st.markdown(
+                """
+                | Architecture | Gating Mechanisms | Memory Capacity | Vanishing Gradient Resistance | Relative Speed | Best Use Case |
+                |---|---|---|---|---|---|
+                | **Vanilla RNN** | None | Short ($<10$ steps) | Low | Fastest | Baseline benchmark |
+                | **LSTM** | Forget, Input, Output | Long ($>50$ steps) | High | Slower | Complex multi-turn transitions |
+                | **GRU** | Update, Reset | Moderate-Long | High | Fast | Balanced performance & efficiency |
+                """
+            )
+        st.markdown("---")
+
+    # Detailed Model Inspector
+    st.subheader("📈 Model Performance & Diagnostic Deep Dive")
+    avail_models = list(eval_metrics_dict.keys())
+    selected_model_tab = st.selectbox(
+        "Select Model to Inspect Diagnostics",
+        avail_models,
+        format_func=lambda m: f"{m.upper()} Classifier",
+        key="temporal_model_view_tab",
+    )
+
+    cur_metrics = eval_metrics_dict[selected_model_tab]
+    cur_result_tuple = train_results_dict.get(selected_model_tab) if train_results_dict else None
+    cur_model, cur_res = cur_result_tuple if cur_result_tuple else (None, None)
+
+    # Test Metrics Row
+    sc1, sc2, sc3, sc4, sc5 = st.columns(5)
+    with sc1:
+        st.metric("Test Accuracy", f"{cur_metrics.accuracy:.2%}")
+    with sc2:
+        st.metric("Macro F1", f"{cur_metrics.macro_f1:.4f}")
+    with sc3:
+        st.metric("Weighted F1", f"{cur_metrics.weighted_f1:.4f}")
+    with sc4:
+        st.metric("Macro Precision", f"{cur_metrics.macro_precision:.4f}")
+    with sc5:
+        st.metric("Macro Recall", f"{cur_metrics.macro_recall:.4f}")
+
+    # Visualizations: Training Curves & Confusion Matrix
+    v_col1, v_col2 = st.columns([1.1, 1.0], gap="large")
+
+    with v_col1:
+        st.markdown("##### Training History Curves")
+        hist_df = None
+        if cur_res is not None and hasattr(cur_res, "history_df"):
+            hist_df = cur_res.history_df
+        else:
+            hist_csv = RESULTS_TEMPORAL_DIR / selected_model_tab / "history.csv"
+            if hist_csv.exists():
+                hist_df = pd.read_csv(hist_csv)
+
+        if hist_df is not None and not hist_df.empty:
+            curves_fig = create_training_curves_figure(hist_df, model_name=selected_model_tab)
+            st.pyplot(curves_fig)
+            if cur_res is not None:
+                st.caption(
+                    f"Best Epoch: `{cur_res.best_epoch}` | Best Val Loss: `{cur_res.best_val_loss:.4f}` | "
+                    f"Val Acc: `{cur_res.best_val_acc:.2%}` | Early Stopped: `{cur_res.stopped_early}`"
+                )
+        else:
+            st.caption("Training history curves unavailable.")
+
+    with v_col2:
+        st.markdown("##### 6×6 Confusion Matrix (Test Set)")
+        cm_fig = create_confusion_matrix_figure(
+            cur_metrics.confusion_matrix,
+            class_names=TARGET_CLASSES,
+            model_name=selected_model_tab,
+        )
+        st.pyplot(cm_fig)
+
+    # Per-Class Breakdown Table
+    st.markdown("##### Per-Class Observable Behaviour Performance")
+    per_class_rows = []
+    for cls_name, p_dict in cur_metrics.per_class_metrics.items():
+        per_class_rows.append(
+            {
+                "Observable Behaviour": cls_name,
+                "Precision": f"{p_dict['precision']:.4f}",
+                "Recall": f"{p_dict['recall']:.4f}",
+                "F1-Score": f"{p_dict['f1']:.4f}",
+                "Test Support": int(p_dict["support"]),
+            }
+        )
+    st.dataframe(pd.DataFrame(per_class_rows), use_container_width=True, hide_index=True)
+
+    st.markdown("---")
+
+    # Interactive Single Sequence Inference Inspector
+    st.subheader("🔍 Single-Sequence Inference Inspector")
+    st.caption("Select any sequence from the unseen test set to run live inference and inspect predicted behaviour probabilities.")
+
+    test_seqs_count = len(active_splits.test_dataset)
+    if test_seqs_count > 0:
+        sel_test_idx = st.selectbox(
+            "Select Test Sequence Index",
+            range(test_seqs_count),
+            format_func=lambda i: (
+                f"Test Sequence #{i} (Track ID {active_splits.test_dataset.metadata_df.iloc[i].get('track_id', '?')} | "
+                f"True: {active_splits.test_dataset.metadata_df.iloc[i].get('dominant_behaviour', '?')})"
+                if active_splits.test_dataset.metadata_df is not None
+                else f"Test Sequence #{i}"
+            ),
+            key="temporal_test_seq_inspect_id",
+        )
+
+        test_tensor, true_label_idx, test_meta = active_splits.test_dataset[sel_test_idx]
+        seq_np = test_tensor.numpy()
+
+        model_for_pred = cur_model
+        if model_for_pred is None:
+            ckpt_path = MODELS_TEMPORAL_DIR / f"{selected_model_tab}_best.pt"
+            if ckpt_path.exists():
+                from src.temporal.models import create_temporal_model
+                ckpt = torch.load(ckpt_path, map_location="cpu")
+                model_for_pred = create_temporal_model(
+                    model_type=selected_model_tab,
+                    input_size=seq_np.shape[1],
+                    hidden_size=ckpt["config"].get("hidden_size", 64),
+                    num_layers=ckpt["config"].get("num_layers", 1),
+                    dropout=ckpt["config"].get("dropout", 0.1),
+                    num_classes=6,
+                )
+                model_for_pred.load_state_dict(ckpt["model_state_dict"])
+                model_for_pred.eval()
+
+        if model_for_pred is not None:
+            top_class, top_conf, prob_dict = predict_sequence(model_for_pred, seq_np)
+            true_class_name = TARGET_CLASSES[int(true_label_idx)]
+
+            p_col1, p_col2 = st.columns([1.0, 1.2], gap="medium")
+            with p_col1:
+                st.markdown("##### Sequence & Prediction Summary")
+                st.markdown(f"- **Track ID:** `{test_meta.get('track_id', '?')}`")
+                st.markdown(f"- **Sequence Length:** `{seq_np.shape[0]} frames` ({seq_np.shape[1]}-dim visual features)")
+                st.markdown(f"- **Time Window:** `{float(test_meta.get('start_timestamp_seconds', 0.0)):.2f}s → {float(test_meta.get('end_timestamp_seconds', 0.0)):.2f}s`")
+                st.markdown(f"- **Ground Truth Behaviour:** `{true_class_name}`")
+                st.markdown(f"- **Predicted Behaviour:** `{top_class}`")
+                st.markdown(f"- **Prediction Confidence:** `{top_conf:.2%}`")
+
+                if top_class == true_class_name:
+                    st.success("✅ **Prediction Matches Ground Truth!**")
+                else:
+                    st.warning("⚠️ **Misclassification:** Model predicted different behaviour.")
+
+            with p_col2:
+                st.markdown("##### Class Probability Distribution")
+                for cls_name, prob in prob_dict.items():
+                    st.write(f"**{cls_name}**: `{prob:.2%}`")
+                    st.progress(min(max(float(prob), 0.0), 1.0))
+        else:
+            st.caption("Model checkpoint not found for live inference.")
+
+    st.markdown("---")
+
+    # Downloads Section
+    st.subheader("📥 Export & Download Artefacts")
+    d_col1, d_col2 = st.columns(2)
+
+    with d_col1:
+        preds_csv_path = RESULTS_TEMPORAL_DIR / PREDICTIONS_CSV_FILENAME
+        if preds_csv_path.exists():
+            preds_bytes = preds_csv_path.read_bytes()
+            st.download_button(
+                label="📥 Download Batch Predictions CSV",
+                data=preds_bytes,
+                file_name=f"{video_id}_{PREDICTIONS_CSV_FILENAME}",
+                mime="text/csv",
+                help="Download tabular sequence predictions across test tracks with confidence scores.",
+                key="btn_download_temporal_predictions_csv",
+            )
+        else:
+            st.caption("Predictions CSV will be generated after training.")
+
+    with d_col2:
+        ckpt_file = MODELS_TEMPORAL_DIR / f"{selected_model_tab}_best.pt"
+        if ckpt_file.exists():
+            ckpt_bytes = ckpt_file.read_bytes()
+            st.download_button(
+                label=f"📥 Download {selected_model_tab.upper()} PyTorch Weights (.pt)",
+                data=ckpt_bytes,
+                file_name=f"{selected_model_tab}_best.pt",
+                mime="application/octet-stream",
+                help="Download best model checkpoint weights with training config.",
+                key="btn_download_temporal_model_weights",
+            )
+        else:
+            st.caption("Model checkpoint will be saved after training.")
+
+
 def main():
     """Main application loop."""
     render_sidebar()
@@ -2169,6 +2704,12 @@ def main():
     # Feature 7: Temporal Sequence Creation Section
     if saved_path and saved_path.exists():
         render_temporal_sequence_section(saved_path)
+
+    st.markdown("---")
+
+    # Feature 8: Recurrent Temporal Modelling Section
+    if saved_path and saved_path.exists():
+        render_temporal_modelling_section(saved_path)
 
 
 if __name__ == "__main__":

@@ -27,6 +27,10 @@ data/processed/*
 results/*
 !results/.gitkeep
 
+# Trained Model Weights
+models/temporal/*
+!models/temporal/.gitkeep
+
 # IDE & OS Specific
 .vscode/
 .idea/
