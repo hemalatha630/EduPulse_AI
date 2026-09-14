@@ -69,6 +69,28 @@ DEFAULT_MAX_FRAME_GAP = 2
 TEMPORAL_SEQUENCES_NPY_FILENAME = "temporal_sequences.npy"
 TEMPORAL_SEQUENCES_METADATA_FILENAME = "temporal_sequences_metadata.csv"
 
+# Feature 8 Configuration: RNN / LSTM / GRU Temporal Modelling
+MODELS_TEMPORAL_DIR = MODELS_DIR / "temporal"
+RESULTS_TEMPORAL_DIR = RESULTS_DIR / "temporal"
+MODEL_RNN = "rnn"
+MODEL_LSTM = "lstm"
+MODEL_GRU = "gru"
+SUPPORTED_TEMPORAL_MODELS = [MODEL_RNN, MODEL_LSTM, MODEL_GRU]
+DEFAULT_TEMPORAL_MODEL = MODEL_LSTM
+DEFAULT_HIDDEN_SIZE = 128
+DEFAULT_NUM_LAYERS = 1
+DEFAULT_DROPOUT = 0.2
+DEFAULT_LEARNING_RATE = 0.001
+DEFAULT_TEMPORAL_BATCH_SIZE = 8
+DEFAULT_BATCH_SIZE = DEFAULT_TEMPORAL_BATCH_SIZE
+DEFAULT_EPOCHS = 20
+DEFAULT_PATIENCE = 5
+DEFAULT_TRAIN_RATIO = 0.70
+DEFAULT_VAL_RATIO = 0.15
+DEFAULT_TEST_RATIO = 0.15
+DEFAULT_RANDOM_SEED = 42
+PREDICTIONS_CSV_FILENAME = "predictions.csv"
+
 # Project Metadata
 PROJECT_TITLE = "Temporal Learning-Engagement Profiling from Classroom Videos"
 PROJECT_SHORT_TITLE = "EduPulse AI"
@@ -107,5 +129,13 @@ EXCLUDED_INTERNAL_STATES = [
 
 def ensure_directories() -> None:
     """Ensure all required project data directories exist on disk."""
-    for directory in [VIDEOS_DIR, FRAMES_DIR, PROCESSED_DIR, RESULTS_DIR, MODELS_DIR]:
+    for directory in [
+        VIDEOS_DIR,
+        FRAMES_DIR,
+        PROCESSED_DIR,
+        RESULTS_DIR,
+        MODELS_DIR,
+        MODELS_TEMPORAL_DIR,
+        RESULTS_TEMPORAL_DIR,
+    ]:
         directory.mkdir(parents=True, exist_ok=True)

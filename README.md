@@ -620,15 +620,80 @@ for batch_tensors, batch_meta in dataloader:
 
 ---
 
-## 13. Automated Testing
+---
 
-Run the complete PyTest suite covering video validation, preprocessing, frame sampling, person detection, multi-object tracking, observable behaviour recognition, CNN visual feature extraction, temporal sequence creation, and Streamlit UI workflows:
+## 13. Feature 8 — RNN / LSTM / GRU Temporal Modelling
+
+Feature 8 introduces recurrent neural architectures (**Vanilla RNN**, **LSTM**, and **GRU**) to model multi-frame temporal dependencies from sequential visual embeddings (Feature 7) and classify observable classroom learning behaviours.
+
+```text
+Temporal Sequences (N, 10, 512)
+              ↓
+  Track-Grouped Splitting (Zero Leakage: Train 70%, Val 15%, Test 15%)
+              ↓
+  Balanced Class Weighting (Computed Strictly on Training Set)
+              ↓
+  Fair Comparison Training Engine (Identical Optimizer, Loss, LR, Patience)
+       ┌──────────────┼──────────────┐
+  Vanilla RNN        LSTM           GRU
+  (nn.RNN)         (nn.LSTM)      (nn.GRU)
+       └──────────────┼──────────────┘
+              ↓
+  Unseen Test Set Evaluation (Accuracy, Macro F1, Weighted F1, Confusion Matrix)
+              ↓
+  Inference Engine (Single-Sequence Inspector + Batch Predictions CSV)
+```
+
+### Academic & Pedagogical Rationale
+* **Beyond Static Snapshots:** Single-frame CNN embeddings capture momentary visual appearances but cannot disambiguate temporal phenomena, such as distinguishing brief momentary glances from sustained instructional engagement or tracking transitions between writing and peer interaction.
+* **Recurrent Dynamics:** Recurrent neural networks maintain an evolving internal hidden state $h_t$ over time steps $t=1 \dots L$, modeling chronological context:
+  $$h_t = \tanh(W_{hh} h_{t-1} + W_{xh} x_t + b)$$
+* **Strict Observable Scope:** Recurrent classifications are strictly confined to the 6 target observable classroom behaviours. In accordance with ethical computer vision standards, no internal mental, cognitive, or emotional states are inferred.
+
+### Data Leakage Prevention Protocol
+* **The Overlapping Window Dilemma:** Because temporal sequences are extracted via overlapping sliding windows (stride $S < L$), adjacent windows share identical video frames. A naive random train/test split would place identical video frames from the same student in both train and test partitions, causing severe data leakage and artificially inflated accuracy.
+* **Track-Grouped Splitting:** EduPulse AI partitions data strictly by **Track ID** (`track_id`). All overlapping sequence windows belonging to a given student track are assigned exclusively to either the Train, Validation, or Test set.
+* **Training-Only Class Weighting:** Class imbalance weights are calculated strictly from the training partition:
+  $$w_c = \frac{N_\text{train}}{|C_\text{present}| \cdot N_{c, \text{train}}}$$
+  The validation and test partitions are never accessed during weight calculation to prevent distribution leakage.
+
+### Model Architectures & Fair Comparison Protocol
+All three recurrent classifiers share identical input dimensions ($D=512$), output dimensions ($K=6$ classes), classification heads, dropout, optimizer (Adam), learning rate ($1 \times 10^{-3}$), and early stopping patience (5 epochs on validation loss):
+
+1. **Vanilla RNN (`RNNClassifier`):**
+   * PyTorch `nn.RNN` recurrent layer (`batch_first=True`)
+   * Fully connected projection head with dropout
+   * Fast, lightweight baseline (~37K parameters at hidden size 64)
+2. **Long Short-Term Memory (`LSTMClassifier`):**
+   * PyTorch `nn.LSTM` with cell state $c_t$ and three gating mechanisms (forget $f_t$, input $i_t$, output $o_t$)
+   * Mitigates vanishing/exploding gradients across long multi-frame sequences (~148K parameters at hidden size 64)
+3. **Gated Recurrent Unit (`GRUClassifier`):**
+   * PyTorch `nn.GRU` with update $z_t$ and reset $r_t$ gates
+   * Combines cell state and hidden state for computational efficiency (~111K parameters at hidden size 64)
+
+### Test Evaluation & Diagnostics
+Models are evaluated strictly on the unseen test tracks using comprehensive metrics:
+* **Overall Metrics:** Accuracy, Macro-averaged F1, Weighted F1, Macro Precision, Macro Recall.
+* **Per-Class Breakdown:** Precision, Recall, F1-Score, and Support across each observable behaviour class.
+* **6×6 Confusion Matrix:** Annotated heatmap visualising true vs predicted behaviour distributions.
+* **Fair Comparison Table & Chart:** Grouped bar chart and tabular benchmark comparing all three models side-by-side.
+
+### Inference & Decoupled Storage
+* **Single-Sequence Inspector:** Interactive UI component allowing users to select any test sequence, run live inference, inspect predicted vs ground truth labels, and view probability distributions across all 6 classes.
+* **Batch Predictions Ledger (`results/temporal/predictions.csv`):** Row-by-row prediction records with Track ID, sequence window timestamps, true labels, predicted labels, and confidence scores.
+* **Model Checkpoints (`models/temporal/`):** Best checkpoint weights (`rnn_best.pt`, `lstm_best.pt`, `gru_best.pt`) saved with full model configuration metadata.
+
+---
+
+## 14. Automated Testing
+
+Run the complete PyTest suite covering video validation, preprocessing, frame sampling, person detection, multi-object tracking, observable behaviour recognition, CNN visual feature extraction, temporal sequence creation, recurrent sequence modelling, and Streamlit UI workflows:
 
 ```bash
 pytest tests/ -v
 ```
 
-The **98-test automated suite** covers:
+The **119-test automated suite** covers:
 * `test_video_utils.py` (14 tests): Filename sanitization, path traversal prevention, extension validation, OpenCV decodability, empty/corrupt file rejection, metadata extraction.
 * `test_frame_extractor.py` (13 tests): Image validation, color conversion, resizing, chronological timestamp ordering, sampling ratios, CSV schema verification, cache handling.
 * `test_detector.py` (7 tests): YOLO model initialization, person detection inference on classroom scenes, confidence threshold filtering, bounding box rendering, empty/zero-person frame handling, invalid inputs, and batch pipeline execution.
@@ -636,22 +701,23 @@ The **98-test automated suite** covers:
 * `test_behaviour.py` (12 tests): Target behaviour labels & metadata, person crop preprocessing & clipping, invalid crop rejection, prototype mode initialization, visual heuristic prediction, peer proximity logic, blur/unknown handling, visual badge drawing, mock PyTorch model forward pass, and end-to-end pipeline execution with `behaviours.csv` validation.
 * `test_cnn.py` (11 tests): ResNet18 model loading, classification head removal, CPU/CUDA device auto-detection, single-crop extraction (512D), batch extraction (B, 512), invalid/empty/out-of-bounds crop safety, end-to-end pipeline execution on synthetic video sequences, temporal order preservation, behaviour label linking, and 2D PCA projection/figure generation.
 * `test_temporal.py` (22 tests): Parameter validation, sliding-window count formula verification, chronological frame index sorting, short track skipping policy, gap splitting policy, multi-track isolation, dominant behaviour calculation, PyTorch FloatTensor conversion, `ClassroomSequenceDataset` DataLoader batching, end-to-end pipeline execution with `.npy` + `.csv` file output, and timeline/coverage visualizations.
-* `test_app.py` (10 tests): Streamlit end-to-end UI integration tests covering initial render, file upload, metric cards, extraction button triggers, detection workflows, Feature 4 tracking workflows, Feature 5 behaviour recognition workflows, Feature 6 CNN extraction workflows, Feature 7 temporal sequence creation workflows, and corrupted upload handling.
+* `test_temporal_models.py` (20 tests): Target behaviour class integer encoding, track-grouped train/val/test splitting strictly preventing overlapping window leakage, training set class weighting, PyTorch Dataset & DataLoader factories, forward pass & output shape verification for RNN, LSTM, and GRU, parameter count verification, training loop execution, fair comparison multi-model training, early stopping validation, test set evaluation metrics calculation, comparison table generation, single-sequence inference, batch prediction CSV generation, training curves plotting, confusion matrix plotting, and model comparison plotting.
+* `test_app.py` (11 tests): Streamlit end-to-end UI integration tests covering initial render, file upload, metric cards, extraction button triggers, detection workflows, Feature 4 tracking workflows, Feature 5 behaviour recognition workflows, Feature 6 CNN extraction workflows, Feature 7 temporal sequence creation workflows, Feature 8 recurrent temporal modelling UI workflows, and corrupted upload handling.
 
 ---
 
-## 14. Current Limitations (Features 1–7 Scope)
+## 15. Current Limitations (Features 1–8 Scope)
 
-Features 1 through 7 focus on **Classroom Video Ingestion, Preprocessing, Frame Extraction, Person Detection, Multi-Object Tracking, Observable Behaviour Recognition, CNN Visual Feature Extraction, and Temporal Sequence Creation**.
+Features 1 through 8 focus on **Classroom Video Ingestion, Preprocessing, Frame Extraction, Person Detection, Multi-Object Tracking, Observable Behaviour Recognition, CNN Visual Feature Extraction, Temporal Sequence Creation, and Recurrent Temporal Sequence Modelling**.
 
 Current limitations:
-* Temporal sequence modeling (RNN / LSTM / GRU training and inference) is not yet implemented (scheduled for Feature 8).
-* Sequences represent chronological windows of observable visual features and do not infer mental engagement, cognitive focus, motivation, or boredom.
-* Fixed-length sliding windows do not yet adapt dynamically to varying lesson segment durations.
+* Sequence models classify fixed-length sliding windows into 6 observable behaviour categories. Temporal aggregation into sustained engagement profiles and trajectory heatmaps is scheduled for Feature 9.
+* Models represent observable physical classroom behaviours and do not infer mental engagement, cognitive focus, comprehension, or motivation.
+* Baseline comparison against static single-frame CNN classifiers and full ablation studies are scheduled for Feature 11 and Feature 12.
 
 ---
 
-## 15. Future Research Pipeline Roadmap
+## 16. Future Research Pipeline Roadmap
 
 The subsequent development phases will follow this structured academic pipeline:
 
@@ -670,7 +736,7 @@ CNN Visual Feature Extraction (Spatial Representations) (Feature 6 — Completed
    ↓
 Temporal Sequence Creation (Sliding Window Time Sequences) (Feature 7 — Completed)
    ↓
-Sequence Modeling (RNN / LSTM / GRU) (Feature 8)
+Sequence Modeling (RNN / LSTM / GRU) (Feature 8 — Completed)
    ↓
 Observable Behaviour Trajectory Profiling (Feature 9)
    ↓
