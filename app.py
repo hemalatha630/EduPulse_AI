@@ -43,6 +43,13 @@ from src.cnn import (
     run_cnn_feature_extraction,
 )
 from src.config import (
+    ACTIVITY_BEHAVIOUR_SUMMARY_FILENAME,
+    ACTIVITY_COLORS,
+    ACTIVITY_DISCUSSION,
+    ACTIVITY_LECTURE,
+    ACTIVITY_PRESENTATION,
+    ACTIVITY_PROBLEM_SOLVING,
+    ACTIVITY_TRANSITION_SUMMARY_FILENAME,
     BEHAVIOUR_COLORS,
     BEHAVIOURS_CSV_FILENAME,
     CNN_FEATURE_DIM,
@@ -77,6 +84,7 @@ from src.config import (
     PREDICTIONS_CSV_FILENAME,
     PROCESSED_DIR,
     PROJECT_TITLE,
+    RESULTS_ACTIVITY_DIR,
     RESULTS_TEMPORAL_DIR,
     RESULTS_TRAJECTORIES_DIR,
     SUPPORTED_CNN_MODELS,
@@ -84,6 +92,8 @@ from src.config import (
     SUPPORTED_TEMPORAL_MODELS,
     SUPPORTED_TRACKERS,
     TARGET_OBSERVABLE_BEHAVIOURS,
+    TARGET_TEACHING_ACTIVITIES,
+    TEACHING_ACTIVITY_SEGMENTS_FILENAME,
     TEMPORAL_SEQUENCES_METADATA_FILENAME,
     TEMPORAL_SEQUENCES_NPY_FILENAME,
     TRACKS_CSV_FILENAME,
@@ -91,6 +101,27 @@ from src.config import (
     UNKNOWN_BEHAVIOUR,
     VIDEOS_DIR,
     ensure_directories,
+)
+from src.activity import (
+    ACTIVITY_DESCRIPTIONS,
+    ACTIVITY_SOURCE_MANUAL,
+    ACTIVITY_UNKNOWN,
+    TeachingActivitySegment,
+    calculate_activity_behaviour_distributions,
+    calculate_activity_transitions,
+    create_activity_behaviour_distribution_figure,
+    create_activity_behaviour_heatmap_figure,
+    create_activity_timeline_figure,
+    create_default_demo_segments,
+    create_track_activity_figure,
+    export_teaching_activity_results,
+    generate_activity_summary_table,
+    get_activity_description,
+    get_activity_hex,
+    load_teaching_activity_segments,
+    map_predictions_to_activities,
+    save_teaching_activity_segments,
+    validate_activity_segments,
 )
 from src.trajectory import (
     BehaviourSegment,
@@ -244,8 +275,9 @@ def render_sidebar():
         st.success("✅ **Feature 6: CNN Visual Feature Extraction**")
         st.success("✅ **Feature 7: Temporal Sequence Creation**")
         st.success("✅ **Feature 8: Temporal Modelling (RNN / LSTM / GRU)**")
-        st.success("🚀 **Feature 9: Observable Behaviour Trajectory**")
-        st.caption("Next stages (Feature 10: Teaching Activity Analysis) unlock in future milestones.")
+        st.success("✅ **Feature 9: Observable Behaviour Trajectory**")
+        st.success("🚀 **Feature 10: Teaching Activity Analysis**")
+        st.caption("Next stages (Feature 11: Baseline Model Comparison) unlock in future milestones.")
 
 
 def render_header():
@@ -2742,6 +2774,12 @@ def main():
     if saved_path and saved_path.exists():
         render_behaviour_trajectory_section(saved_path)
 
+    st.markdown("---")
+
+    # Feature 10: Teaching Activity Analysis Section
+    if saved_path and saved_path.exists():
+        render_teaching_activity_section(saved_path)
+
 
 def render_behaviour_trajectory_section(saved_path: Path):
     """Render Feature 9: Observable Behaviour Trajectory Analysis and Visualizations."""
@@ -3121,7 +3159,397 @@ def render_behaviour_trajectory_section(saved_path: Path):
         st.caption("Trajectory CSV export ready.")
 
 
+def render_teaching_activity_section(saved_path: Path):
+    """Render Feature 10: Teaching Activity Analysis and Behaviour Distribution Section."""
+    st.header("🏫 Teaching Activity Analysis")
+    st.caption(
+        "Empirical investigation of how observable student learning-related behaviours differ across "
+        "distinct instructional classroom activities: Lecture, Discussion, Problem-solving, and Presentation."
+    )
+
+    video_id = derive_video_id(saved_path.name)
+    processed_dir = PROCESSED_DIR / video_id
+    seq_npy_path = processed_dir / TEMPORAL_SEQUENCES_NPY_FILENAME
+    seq_meta_path = processed_dir / TEMPORAL_SEQUENCES_METADATA_FILENAME
+
+    # Academic & Ethical Pedagogical Notice
+    with st.expander("ℹ️ Pedagogical Foundations & Research Boundary", expanded=False):
+        st.markdown(
+            """
+            **Pedagogical Framework & Research Boundary:**
+            - **Instructional Setting Description**: Teaching activity classification describes the *instructional structure* of the lesson (e.g., lecture, discussion, problem-solving, presentation).
+            - **No Psychological State Inferences**: Teaching activities and observable behaviours do **not** measure internal student mental states, motivation, concentration, comprehension, boredom, intelligence, or emotional states.
+            - **Provenance Attribution**: Activity labels originate strictly from validated manual segment annotations or curriculum metadata (`Activity source: Manual annotation`).
+            - **Canonical Modalities**:
+              1. **Lecture**: Instructor-led whole-class concept delivery.
+              2. **Discussion**: Interactive verbal dialogue (student-to-student or teacher-to-student).
+              3. **Problem-solving**: Task-centered active work on exercises, worksheets, or problems.
+              4. **Presentation**: Student or guest speaker delivery of projects or solutions.
+            """
+        )
+
+    # Check prerequisites: Feature 7 temporal sequences
+    if not (seq_npy_path.exists() and seq_meta_path.exists()):
+        st.info(
+            "👉 Please complete **Feature 7: Temporal Sequence Creation** and **Feature 8: Temporal Modelling** "
+            "above before performing teaching activity analysis."
+        )
+        return
+
+    # Check Feature 8 model checkpoints
+    available_models = []
+    for m in SUPPORTED_TEMPORAL_MODELS:
+        if (MODELS_TEMPORAL_DIR / f"{m}_best.pt").exists():
+            available_models.append(m)
+
+    if not available_models:
+        st.warning(
+            "⚠️ No trained recurrent model checkpoints found in `models/temporal/`. "
+            "Please train at least one recurrent architecture (LSTM, GRU, or RNN) in Feature 8 above."
+        )
+        return
+
+    # Retrieve video duration
+    v_success, v_meta, _ = extract_video_metadata(saved_path)
+    vid_duration = float(v_meta.duration_seconds) if v_success and v_meta and v_meta.duration_seconds > 0 else 3.0
+
+    # Load existing activity segments
+    segments = load_teaching_activity_segments(video_id=video_id)
+
+    # Segment Annotation & Management Interface
+    st.subheader("🏷️ Teaching Activity Segments & Annotation Interface")
+    st.caption(
+        f"Designate instructional activity time intervals across the video duration ({format_timestamp_mmss(vid_duration)} / {vid_duration:.2f}s). "
+        "Each segment must have a valid canonical activity and non-overlapping timestamps."
+    )
+
+    with st.expander("📝 Manage Instructional Activity Segments", expanded=(len(segments) == 0)):
+        if not segments:
+            st.warning(
+                "⚠️ No teaching activity segments found for this video. "
+                "Load standard recommended demo segments or create custom intervals below."
+            )
+            if st.button("⚡ Load Recommended Demo Segments", key="btn_load_demo_activity_segments"):
+                demo_segs = create_default_demo_segments(video_id=video_id, video_duration_seconds=vid_duration)
+                save_teaching_activity_segments(
+                    video_id=video_id,
+                    segments=demo_segs,
+                    video_duration_seconds=vid_duration,
+                )
+                st.success("Default demo segments loaded and validated!")
+                st.rerun()
+        else:
+            # Display current segments table
+            seg_rows = []
+            for s in segments:
+                seg_rows.append(
+                    {
+                        "Segment #": s.segment_id,
+                        "Activity Class": s.activity_class,
+                        "Start Time": f"{s.start_time_formatted} ({s.start_timestamp_seconds:.2f}s)",
+                        "End Time": f"{s.end_time_formatted} ({s.end_timestamp_seconds:.2f}s)",
+                        "Duration": f"{s.duration_seconds:.2f}s",
+                        "Source": s.annotation_source,
+                    }
+                )
+            st.markdown("##### Current Annotated Segments")
+            st.dataframe(pd.DataFrame(seg_rows), use_container_width=True, hide_index=True)
+
+            col_btn1, col_btn2 = st.columns([1, 4])
+            with col_btn1:
+                if st.button("🗑️ Clear All Segments", key="btn_clear_activity_segments", help="Remove all segments"):
+                    save_teaching_activity_segments(video_id=video_id, segments=[], video_duration_seconds=vid_duration)
+                    st.rerun()
+
+        st.markdown("---")
+        st.markdown("##### ➕ Add Custom Activity Segment")
+        add_c1, add_c2, add_c3, add_c4 = st.columns([1.5, 1.2, 1.2, 1.0])
+
+        with add_c1:
+            new_act = st.selectbox(
+                "Activity Class",
+                options=TARGET_TEACHING_ACTIVITIES,
+                key="new_activity_class_select",
+            )
+        with add_c2:
+            new_start = st.number_input(
+                "Start Time (s)",
+                min_value=0.0,
+                max_value=max(0.1, vid_duration),
+                value=0.0,
+                step=0.5,
+                key="new_activity_start_input",
+            )
+        with add_c3:
+            new_end = st.number_input(
+                "End Time (s)",
+                min_value=0.1,
+                max_value=max(0.1, vid_duration + 0.1),
+                value=min(max(0.5, vid_duration), 5.0),
+                step=0.5,
+                key="new_activity_end_input",
+            )
+        with add_c4:
+            st.write("")
+            st.write("")
+            if st.button("Add Segment", key="btn_add_activity_segment"):
+                candidate_seg = TeachingActivitySegment(
+                    segment_id=len(segments) + 1,
+                    video_id=video_id,
+                    activity_class=new_act,
+                    start_timestamp_seconds=round(new_start, 2),
+                    end_timestamp_seconds=round(new_end, 2),
+                    duration_seconds=round(new_end - new_start, 2),
+                    annotation_source=ACTIVITY_SOURCE_MANUAL,
+                )
+                candidate_list = list(segments) + [candidate_seg]
+                try:
+                    validate_activity_segments(candidate_list, video_duration_seconds=vid_duration)
+                    save_teaching_activity_segments(
+                        video_id=video_id,
+                        segments=candidate_list,
+                        video_duration_seconds=vid_duration,
+                    )
+                    st.success(f"Added Segment #{candidate_seg.segment_id} ({new_act})!")
+                    st.rerun()
+                except ValueError as err:
+                    st.error(f"❌ Validation Error: {err}")
+
+    if not segments:
+        st.info("👉 Please add or load teaching activity segments above to generate activity-wise behaviour analytics.")
+        return
+
+    st.markdown("---")
+
+    # Model Selector for Zero-Retraining Inference
+    st.subheader("⚙️ Trajectory Inference Model Selection")
+    m_col1, m_col2 = st.columns([1, 2])
+    with m_col1:
+        def_idx = (
+            available_models.index(DEFAULT_TEMPORAL_MODEL)
+            if DEFAULT_TEMPORAL_MODEL in available_models
+            else 0
+        )
+        selected_model = st.selectbox(
+            "Select Recurrent Model for Activity Analysis",
+            options=available_models,
+            index=def_idx,
+            format_func=lambda m: f"{m.upper()} Model",
+            key="activity_selected_model",
+            help="Select which trained recurrent model provides the observable behaviour predictions.",
+        )
+    with m_col2:
+        st.info(
+            f"Active Model: **{selected_model.upper()}** | Zero Retraining: Reusing precomputed sequence predictions "
+            "and weights directly via `torch.no_grad()`."
+        )
+
+    # Load sequence predictions
+    try:
+        with st.spinner(f"Loading sequence predictions for {selected_model.upper()}..."):
+            predictions_df = load_or_generate_trajectory_predictions(
+                video_id=video_id,
+                model_type=selected_model,
+            )
+    except Exception as exc:
+        st.error(f"❌ Error loading predictions: {exc}")
+        return
+
+    if predictions_df.empty or "track_id" not in predictions_df.columns:
+        st.warning("⚠️ No valid sequence predictions could be loaded for this video.")
+        return
+
+    # Map predictions to activity segments
+    mapped_df = map_predictions_to_activities(predictions_df=predictions_df, segments=segments)
+
+    # Compute distributions, summary table, and transitions
+    dist_df = calculate_activity_behaviour_distributions(mapped_df=mapped_df, segments=segments)
+    summary_df = generate_activity_summary_table(
+        distributions_df=dist_df,
+        segments=segments,
+        mapped_df=mapped_df,
+    )
+    trans_df = calculate_activity_transitions(mapped_df=mapped_df)
+
+    # Export results
+    export_teaching_activity_results(
+        video_id=video_id,
+        model_type=selected_model,
+        segments=segments,
+        summary_df=summary_df,
+        distribution_df=dist_df,
+        transitions_df=trans_df,
+    )
+
+    st.markdown("---")
+
+    # 1. Activity Timeline Visualization
+    st.subheader("⏱️ Instructional Activity Timeline & Dominant Behaviours")
+    st.caption("Horizontal Gantt-style timeline of instructional activity segments with MM:SS timecodes.")
+    timeline_fig = create_activity_timeline_figure(
+        segments=segments,
+        video_duration_seconds=vid_duration,
+        summary_df=summary_df,
+    )
+    st.pyplot(timeline_fig, use_container_width=True)
+    plt.close(timeline_fig)
+
+    # 2. Key Pedagogical Metrics Row
+    st.markdown("---")
+    st.subheader("📊 Activity Summary & Dominant Observable Behaviours")
+    st.caption("High-level pedagogical metrics comparing observable student engagement across activities.")
+
+    tot_segments = len(segments)
+    tot_obs_dur = float(dist_df["observed_duration_seconds"].sum())
+    unique_acts = [a for a in dist_df["activity_class"].unique() if a != ACTIVITY_UNKNOWN]
+
+    # Find overall dominant behaviour
+    overall_b_dur = dist_df.groupby("behaviour_class")["observed_duration_seconds"].sum()
+    top_overall_b = (
+        overall_b_dur.idxmax()
+        if not overall_b_dur.empty and overall_b_dur.max() > 0
+        else "N/A"
+    )
+
+    met_c1, met_c2, met_c3, met_c4 = st.columns(4)
+    with met_c1:
+        st.metric("Activity Segments", f"{tot_segments}")
+    with met_c2:
+        st.metric("Distinct Modalities", f"{len(unique_acts)}")
+    with met_c3:
+        st.metric("Classroom Observed Time", f"{tot_obs_dur:.1f}s")
+    with met_c4:
+        st.metric("Classroom Dominant Behaviour", top_overall_b)
+
+    # Display Activity Summary Table
+    st.markdown("##### Teaching Activity Breakdown Table")
+    st.dataframe(summary_df, use_container_width=True, hide_index=True)
+
+    # Note if any ties detected
+    ties = summary_df[summary_df["Is Tie"] == True]
+    if not ties.empty:
+        tied_names = ", ".join(ties["Activity"].tolist())
+        st.info(f"⚖️ **Tied Behaviours Detected:** In activity '{tied_names}', multiple behaviours exhibited identical maximum duration.")
+
+    st.markdown("---")
+
+    # 3. Comparative Visual Analytics
+    st.subheader("📈 Comparative Observable Behaviour Analytics")
+    st.caption("Investigating how student behaviour distributions differ across instructional classroom settings.")
+
+    tab_bars, tab_heatmap = st.tabs(["📊 Grouped Bar Chart (Distribution %)", "🗺️ Activity × Behaviour Matrix Heatmap"])
+
+    with tab_bars:
+        st.caption("Compares the percentage share of each observable behaviour across all active teaching activities.")
+        bar_fig = create_activity_behaviour_distribution_figure(
+            distribution_df=dist_df,
+            title=f"Observable Behaviour Percentage Share by Activity ({selected_model.upper()} Model)",
+        )
+        st.pyplot(bar_fig, use_container_width=True)
+        plt.close(bar_fig)
+
+    with tab_heatmap:
+        st.caption("Matrix cross-tabulation of observable behaviours against teaching activities with percentage shares and observed durations.")
+        heatmap_fig = create_activity_behaviour_heatmap_figure(distribution_df=dist_df)
+        st.pyplot(heatmap_fig, use_container_width=True)
+        plt.close(heatmap_fig)
+
+    st.markdown("---")
+
+    # 4. Student Track-Level Breakdown
+    st.subheader("🎯 Student Track-Level Activity Breakdown")
+    st.caption("Filter by individual anonymous student track to examine their individual behaviour during each activity.")
+
+    all_tracks = sorted(mapped_df["track_id"].unique())
+    track_options = ["Classroom (All Students)"] + [f"Student Track #{tid}" for tid in all_tracks]
+
+    selected_track_opt = st.selectbox(
+        "Select Track Perspective",
+        options=track_options,
+        index=0,
+        key="activity_track_filter_select",
+        help="Inspect behaviour distribution either classroom-wide or for a single tracked individual.",
+    )
+
+    if selected_track_opt != "Classroom (All Students)":
+        sel_tid = int(selected_track_opt.split("#")[-1])
+        track_dist = calculate_activity_behaviour_distributions(
+            mapped_df=mapped_df,
+            segments=segments,
+            track_id=sel_tid,
+        )
+        t_fig = create_track_activity_figure(track_distribution_df=track_dist, track_id=sel_tid)
+        st.pyplot(t_fig, use_container_width=True)
+        plt.close(t_fig)
+
+        # Track-level data table
+        with st.expander(f"📋 Track #{sel_tid} Activity Data Table", expanded=False):
+            st.dataframe(track_dist, use_container_width=True, hide_index=True)
+    else:
+        st.caption("Currently displaying aggregate classroom-level distribution.")
+
+    st.markdown("---")
+
+    # 5. Activity-Stratified Behaviour Transitions
+    with st.expander("🔄 Activity-Stratified Behaviour Transitions", expanded=False):
+        st.caption("Observed transitions between consecutive observable behaviour categories within each teaching activity.")
+        if not trans_df.empty:
+            st.dataframe(trans_df, use_container_width=True, hide_index=True)
+        else:
+            st.caption("No behaviour transitions detected within activity segments.")
+
+    st.markdown("---")
+
+    # 6. Export & Download Section
+    st.subheader("📥 Export Teaching Activity Results")
+    st.caption("Download teaching activity summaries, behaviour distributions, and segment annotations in standard CSV format.")
+
+    d_col1, d_col2, d_col3 = st.columns(3)
+
+    out_dir = RESULTS_ACTIVITY_DIR / video_id
+    summary_path = out_dir / f"activity_behaviour_summary_{selected_model.lower()}.csv"
+    dist_path = out_dir / f"activity_behaviour_distributions_{selected_model.lower()}.csv"
+    segs_path = processed_dir / TEACHING_ACTIVITY_SEGMENTS_FILENAME
+
+    with d_col1:
+        if summary_path.exists():
+            st.download_button(
+                label="📥 Download Activity Summary CSV",
+                data=summary_path.read_bytes(),
+                file_name=f"{video_id}_activity_summary_{selected_model.lower()}.csv",
+                mime="text/csv",
+                key="btn_download_activity_summary_csv",
+            )
+        else:
+            st.caption("Summary CSV will be generated upon analysis.")
+
+    with d_col2:
+        if dist_path.exists():
+            st.download_button(
+                label="📥 Download Behaviour Distributions CSV",
+                data=dist_path.read_bytes(),
+                file_name=f"{video_id}_activity_distributions_{selected_model.lower()}.csv",
+                mime="text/csv",
+                key="btn_download_activity_dist_csv",
+            )
+        else:
+            st.caption("Distributions CSV will be generated upon analysis.")
+
+    with d_col3:
+        if segs_path.exists():
+            st.download_button(
+                label="📥 Download Segments Annotation CSV",
+                data=segs_path.read_bytes(),
+                file_name=f"{video_id}_{TEACHING_ACTIVITY_SEGMENTS_FILENAME}",
+                mime="text/csv",
+                key="btn_download_activity_segments_csv",
+            )
+        else:
+            st.caption("Segments CSV ready.")
+
+
 if __name__ == "__main__":
     main()
+
 
 
